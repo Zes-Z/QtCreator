@@ -5,8 +5,8 @@ project(DailyUp VERSION 0.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 1. 引入必要组件
-find_package(Qt6 REQUIRED COMPONENTS Quick Sql)
+# 1. 引入必要组件 (显式引入 Core, Gui, Qml 避免隐式依赖问题)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Sql)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -33,7 +33,7 @@ qt_add_resources(appDailyUp "app_resources"
         images/app_icon.png
 )
 
-# 配置 QML 模块（建议将 TaskManager 放入 SOURCES，方便 QML 识别）
+# 配置 QML 模块（修复了重复的 SOURCES 关键字）
 qt_add_qml_module(appDailyUp
     URI DailyUp
     VERSION 1.0
@@ -42,6 +42,9 @@ qt_add_qml_module(appDailyUp
     SOURCES
         TaskManager.h
         TaskManager.cpp
+        databasemanager.h
+        databasemanager.cpp
+        # QML_FILES ThemeSetting.qml
 )
 
 # macOS 与 Windows 属性设置
@@ -52,9 +55,12 @@ set_target_properties(appDailyUp PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
-# 链接依赖库
+# 链接依赖库 (同步补全依赖)
 target_link_libraries(appDailyUp
     PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Qml
         Qt6::Quick
         Qt6::Sql
 )

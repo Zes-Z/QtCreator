@@ -1,121 +1,119 @@
 #include "TaskManager.h"
-#include <QSqlQuery>
-#include <QSqlError>
-#include <QDebug>
-#include <QStandardPaths>
-#include <QDir>
 
-TaskManager::TaskManager(QObject *parent) : QObject(parent) {
-    initDatabase();
+TaskManager::TaskManager(QObject *parent) : QAbstractListModel(parent) {
 }
 
-TaskManager::~TaskManager() {
-    if (m_db.isOpen()) {
-        m_db.close();
+int TaskManager::rowCount(const QModelIndex &parent) const {
+    if (parent.isValid()) return 0;
+    return m_tasks.count();
+}
+
+QVariant TaskManager::data(const QModelIndex &index, int role) const {
+    if (!index.isValid() || index.row() >= m_tasks.count())
+        return QVariant();
+
+    const TaskData &task = m_tasks[index.row()];
+
+    switch (role) {
+    case IdRole: return task.id;
+    case DateRole: return task.date;
+    case ContentRole: return task.content;
+    case IsCompletedRole: return task.isCompleted;
+    case IsPinnedRole: return task.isPinned;
+    default: return QVariant();
     }
 }
 
-bool TaskManager::initDatabase() {
-    m_db = QSqlDatabase::addDatabase("QSQLITE");
-
-    QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir dir(path);
-    if (!dir.exists()) {
-        dir.mkpath(path);
-    }
-
-    QString dbPath = path + QDir::separator() + "dailyup.db";
-    m_db.setDatabaseName(dbPath);
-
-    if (!m_db.open()) {
-        qDebug() << "Error: Failed to connect database." << m_db.lastError().text();
-        return false;
-    }
-
-    QSqlQuery query;
-    QString createTableSql = "CREATE TABLE IF NOT EXISTS tasks ("
-                             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                             "task_date TEXT NOT NULL, "
-                             "task_text TEXT NOT NULL, "
-                             "is_completed INTEGER NOT NULL);";
-
-    if (!query.exec(createTableSql)) {
-        qDebug() << "Error: Failed to create table." << query.lastError().text();
-        return false;
-    }
-
-    qDebug() << "Database initialized successfully at:" << dbPath;
-    return true;
+QHash<int, QByteArray> TaskManager::roleNames() const {
+    QHash<int, QByteArray> roles;
+    roles[IdRole] = "taskId";
+    roles[DateRole] = "taskDate";
+    roles[ContentRole] = "taskContent";
+    roles[IsCompletedRole] = "isCompleted";
+    roles[IsPinnedRole] = "isPinned";
+    return roles;
 }
 
-QVariantList TaskManager::getTasksByDate(const QString &dateStr) {
-    QVariantList taskList;
-    QSqlQuery query;
-    query.prepare("SELECT id, task_text, is_completed FROM tasks WHERE task_date = :dateStr");
-    query.bindValue(":dateStr", dateStr);
+void TaskManager::setCurrentDate(const QString &date) {
+    if (m_currentDate != date) {
+        m_currentDate = date;
+        emit currentDateChanged();
+        loadTasks(date);
+    }
+}
 
-    if (query.exec()) {
-        while (query.next()) {
-            QVariantMap task;
-            task["id"] = query.value("id");
-            task["taskText"] = query.value("task_text");
-            task["isCompleted"] = query.value("is_completed").toBool();
-            taskList.append(task);
+// 根据日期加载任务（实现每天数据的严格独立隔离）
+void TaskManager::loadTasks(const QString &date) {
+    m_currentDate = date;
+
+    // 通知 QML 模型即将重置
+    beginResetModel();
+    // 仅从数据库拉取匹配当前日期的任务列表
+    m_tasks = DatabaseManager::instance().getTasksByDate(date);
+    // 通知 QML 模型重置完毕，自动渲染该日期的专属任务
+    endResetModel();
+}
+
+// 添加新任务到指定日期
+void TaskManager::addTask(const QString &date, const QString &content) {
+    QString targetDate = date.isEmpty() ? m_currentDate : date;
+    if (content.trimmed().isEmpty()) return;
+
+    if (DatabaseManager::instance().addTask(targetDate, content)) {
+        // 如果当前正好在看这个日期，则直接刷新列表
+        if (targetDate == m_currentDate) {
+            loadTasks(m_currentDate);
         }
-    } else {
-        qDebug() << "Error: Failed to query tasks." << query.lastError().text();
     }
-
-    return taskList;
 }
 
-bool TaskManager::addTask(const QString &dateStr, const QString &taskText) {
-    QSqlQuery query;
-    query.prepare("INSERT INTO tasks (task_date, task_text, is_completed) VALUES (:dateStr, :taskText, 0)");
-    query.bindValue(":dateStr", dateStr);
-    query.bindValue(":taskText", taskText);
+// 切换特定任务的完成状态
+void TaskManager::toggleTaskStatus(int index) {
+    if (index < 0 || index >= m_tasks.count()) return;
 
-    if (!query.exec()) {
-        qDebug() << "Error: Failed to add task." << query.lastError().text();
-        return false;
+    TaskData &task = m_tasks[index];
+    bool newStatus = !task.isCompleted;
+
+    if (DatabaseManager::instance().updateTaskStatus(task.id, newStatus)) {
+        task.isCompleted = newStatus;
+        QModelIndex modelIndex = createIndex(index, 0);
+        emit dataChanged(modelIndex, modelIndex, {IsCompletedRole});
     }
-    return true;
 }
 
-bool TaskManager::updateTaskStatus(int id, bool isCompleted) {
-    QSqlQuery query;
-    query.prepare("UPDATE tasks SET is_completed = :isCompleted WHERE id = :id");
-    query.bindValue(":isCompleted", isCompleted ? 1 : 0);
-    query.bindValue(":id", id);
+// 删除特定任务
+void TaskManager::deleteTask(int index) {
+    if (index < 0 || index >= m_tasks.count()) return;
 
-    if (!query.exec()) {
-        qDebug() << "Error: Failed to update task status." << query.lastError().text();
-        return false;
+    int taskId = m_tasks[index].id;
+    if (DatabaseManager::instance().deleteTask(taskId)) {
+        beginRemoveRows(QModelIndex(), index, index);
+        m_tasks.removeAt(index);
+        endRemoveRows();
     }
-    return true;
 }
 
-bool TaskManager::updateTaskText(int id, const QString &taskText) {
-    QSqlQuery query;
-    query.prepare("UPDATE tasks SET task_text = :taskText WHERE id = :id");
-    query.bindValue(":taskText", taskText);
-    query.bindValue(":id", id);
+// 更新任务内容
+void TaskManager::updateTaskContent(int index, const QString &content) {
+    if (index < 0 || index >= m_tasks.count() || content.trimmed().isEmpty()) return;
 
-    if (!query.exec()) {
-        qDebug() << "Error: Failed to update task text." << query.lastError().text();
-        return false;
+    TaskData &task = m_tasks[index];
+    if (DatabaseManager::instance().updateTaskContent(task.id, content)) {
+        task.content = content;
+        QModelIndex modelIndex = createIndex(index, 0);
+        emit dataChanged(modelIndex, modelIndex, {ContentRole});
     }
-    return true;
 }
 
-bool TaskManager::deleteTask(int id) {
-    QSqlQuery query;
-    query.prepare("DELETE FROM tasks WHERE id = :id");
-    query.bindValue(":id", id);
+// 切换置顶状态
+void TaskManager::toggleTaskPin(int index) {
+    if (index < 0 || index >= m_tasks.count()) return;
 
-    if (!query.exec()) {
-        qDebug() << "Error: Failed to delete task." << query.lastError().text();
-        return false;
+    TaskData &task = m_tasks[index];
+    bool newPinStatus = !task.isPinned;
+
+    if (DatabaseManager::instance().toggleTaskPin(task.id, newPinStatus)) {
+        // 置顶状态改变后，由于排序会变，最稳妥的做法是重新加载当前日期任务
+        loadTasks(m_currentDate);
     }
-    return true;
 }

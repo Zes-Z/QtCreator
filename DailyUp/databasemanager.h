@@ -33,6 +33,11 @@ public:
     bool updateTaskContent(int id, const QString& content);
     bool toggleTaskPin(int id, bool isPinned);
 
+    // ================= 新增 =================
+    // 检查并执行跨日任务继承
+    bool rolloverTasksForToday();
+    // =======================================
+
 private:
     explicit DatabaseManager(QObject *parent = nullptr);
     ~DatabaseManager();

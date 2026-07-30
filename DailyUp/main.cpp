@@ -15,6 +15,11 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    // ================= 新增：启动时立即执行跨日继承 =================
+    // 确保在 QML 实例化 TaskManager 前，数据库中今天的数据已经准备完毕
+    DatabaseManager::instance().rolloverTasksForToday();
+    // ==============================================================
+
     // 2. 将 TaskManager 注册到 QML 系统中
     // 包名为 DailyUp，版本 1.0，QML中的类名为 TaskManager
     qmlRegisterType<TaskManager>("DailyUp", 1, 0, "TaskManager");

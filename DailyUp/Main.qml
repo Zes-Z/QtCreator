@@ -7,10 +7,27 @@ Window {
     id: root
 
     property string currentDate: ""
+    property int dateRefreshKey: 0
 
+    property date todayDate: new Date()
     TaskManager {
         id: taskManager
     }
+    // 新增：监听跨日信号
+    Connections {
+        target: taskManager
+
+        function onDateRollover() {
+
+            root.todayDate = new Date()
+
+            timelineView.positionViewAtIndex(
+                6,
+                ListView.Contain
+            )
+
+        }
+    }
 
     width: 320
     height: 600
@@ -176,15 +193,17 @@ Window {
                     delegate: Item {
                         width: 76
                         height: 55
-
-                        property bool isToday: index === 6
+                        property bool isToday:
+                            databaseDateStr === Qt.formatDate(root.todayDate, "yyyy-MM-dd")
                         property bool isSelected: timelineView.currentIndex === index
 
-                        property var targetDate: {
-                            var d = new Date()
-                            d.setDate(d.getDate() - (6 - index))
-                            return d
-                        }
+                        property var targetDate: {
+                            var d = new Date(root.todayDate)
+                            d.setDate(
+                                d.getDate() - (6 - index)
+                            )
+                            return d
+                        }
 
                         property string dayStr:
                             [
@@ -688,7 +707,6 @@ Window {
                             }
                         }
                     }
-
 
 
                     Rectangle {

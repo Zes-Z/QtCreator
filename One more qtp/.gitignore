@@ -1,0 +1,23 @@
+# Build directories
+build/
+build-*/
+out/
+
+# Qt Creator
+*.pro.user
+*.pro.user.*
+.cache/
+.qmake.stash
+
+# IDE
+.vscode/
+.idea/
+
+# Local database / runtime data
+*.db
+*.db-journal
+*.ini
+
+# OS
+.DS_Store
+Thumbs.db

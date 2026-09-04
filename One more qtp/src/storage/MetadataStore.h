@@ -9,7 +9,6 @@ class QSqlDatabase;
 
 namespace litapp {
 
-// 本地元数据存储：使用 SQLite 缓存文件分类、标签、同步状态等。
 class MetadataStore
 {
 public:
@@ -21,14 +20,54 @@ public:
 
     bool addFile(const FileItem &item);
     bool updateFile(const FileItem &item);
-    bool updateLocalPath(const QString &fileId, const QString &localPath);
-    bool removeFile(const QString &fileId);
-    QVector<FileItem> files(FileZone zone) const;
-    FileItem fileById(const QString &fileId) const;
+    bool updateLocalPath(
+        const QString &fileId,
+        const QString &localPath);
 
-    // 分类与标签筛选
-    QVector<FileItem> filesByCategory(FileCategory category, FileZone zone) const;
-    QVector<FileItem> filesByTag(const QString &tag, FileZone zone) const;
+    bool removeFile(
+        const QString &fileId);
+
+    bool moveToTrash(
+        const QString &fileId,
+        const QString &trashLocalPath,
+        const QString &originalLocalPath);
+
+    bool restoreFromTrash(
+        const QString &fileId,
+        const QString &localPath);
+
+    bool permanentlyDelete(
+        const QString &fileId);
+
+    QVector<FileItem> files(
+        FileSpace space) const;
+
+    QVector<FileItem> childrenOf(
+        const QString &parentId,
+        FileSpace space) const;
+
+    QVector<FileItem> rootFiles(
+        FileSpace space) const;
+
+    QVector<FileItem> trashFiles(
+        FileSpace space) const;
+
+    bool isTrashed(
+        const QString &fileId) const;
+
+    QString originalLocalPath(
+        const QString &fileId) const;
+
+    FileItem fileById(
+        const QString &fileId) const;
+
+    QVector<FileItem> filesByCategory(
+        FileCategory category,
+        FileSpace space) const;
+
+    QVector<FileItem> filesByTag(
+        const QString &tag,
+        FileSpace space) const;
 
 private:
     bool createTables();

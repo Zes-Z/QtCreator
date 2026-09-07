@@ -56,6 +56,29 @@ Window {
         color: "#F0F0F5"
         radius: 24
         clip: true
+        // 左上角圆弧按钮：点击打开数据库文件所在目录
+        Rectangle {
+            id: dbOpenButton
+            width: 26
+            height: 26
+            radius: 13
+            color: dbOpenHover.containsMouse ? "#37924B" : "#4CAF50"
+            anchors.top: parent.top
+            anchors.left: parent.left
+            z: 100
+            Text {
+                anchors.centerIn: parent
+                text: "\uD83D\uDCC1"
+                font.pixelSize: 11
+                color: "#FFFFFF"
+            }
+            MouseArea {
+                id: dbOpenHover
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: taskManager.openDatabaseFolder()
+            }
+        }
 // 独立定位在右上角外侧圆弧处的关闭按钮
         Rectangle {
             width: 26
@@ -159,7 +182,7 @@ Window {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 75
+                Layout.preferredHeight: 58
                 color: "#FFFFFF"
                 radius: 16
 
@@ -192,7 +215,7 @@ Window {
 
                     delegate: Item {
                         width: 76
-                        height: 55
+                        height: 42
                         property bool isToday:
                             databaseDateStr === Qt.formatDate(root.todayDate, "yyyy-MM-dd")
                         property bool isSelected: timelineView.currentIndex === index
@@ -269,6 +292,19 @@ Window {
                 Layout.fillHeight: true
                 color: "#FFFFFF"
                 radius: 16
+
+                // 空状态提示：当前日期还没有任务时展示（列表为空时 ListView 透明，不遮挡）
+                Text {
+                    visible: taskListView.count === 0
+                    anchors.centerIn: parent
+                    width: parent.width - 24
+                    text: "今日暂无任务\n点击下方 + Add New Task 添加"
+                    color: "#AAAAAA"
+                    font.pixelSize: 13
+                    horizontalAlignment: Text.AlignHCenter
+                    lineHeightMode: Text.FixedHeight
+                    lineHeight: 20
+                }
 
                 ListView {
                     id: taskListView
@@ -455,23 +491,29 @@ Window {
                                 xAxis.minimum: -56
                                 xAxis.maximum: 112
                                 onActiveChanged: {
-
                                     if (!active) {
-
+                                        var targetX = 0
                                         if (contentItem.x < -28) {
-                                            contentItem.x = -56
+                                            targetX = -56
+                                        } else if (contentItem.x > 84) {
+                                            targetX = 112
+                                        } else if (contentItem.x > 28) {
+                                            targetX = 56
                                         }
-                                        else if (contentItem.x > 84) {
-                                            contentItem.x = 112
-                                        }
-                                        else if (contentItem.x > 28) {
-                                            contentItem.x = 56
-                                        }
-                                        else {
-                                            contentItem.x = 0
-                                        }
+
+                                        // 松手后平滑吸附到最近的挡位，而不是瞬间跳变
+                                        snapX.from = contentItem.x
+                                        snapX.to = targetX
+                                        snapX.start()
                                     }
                                 }
+                            }
+                            NumberAnimation {
+                                id: snapX
+                                target: contentItem
+                                property: "x"
+                                duration: 200
+                                easing.type: Easing.OutCubic
                             }
 
 
@@ -496,7 +538,7 @@ Window {
             Rectangle {
                 id: bottomTaskBlock
                 Layout.fillWidth: true
-                Layout.preferredHeight: 60
+                Layout.preferredHeight: 44
                 color: "#FFFFFF"
                 radius: 16
 

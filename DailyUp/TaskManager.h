@@ -34,6 +34,7 @@ public:
     Q_INVOKABLE void deleteTask(int index);
     Q_INVOKABLE void updateTaskContent(int index, const QString &content);
     Q_INVOKABLE void toggleTaskPin(int index);
+    Q_INVOKABLE void openDatabaseFolder();
 
 signals:
     void currentDateChanged();

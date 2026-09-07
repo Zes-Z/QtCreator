@@ -38,6 +38,9 @@ public:
     bool rolloverTasksForToday();
     // =======================================
 
+    // 在系统资源管理器中打开“数据库文件所在”目录（用于查看/备份数据）
+    Q_INVOKABLE bool openDatabaseFolder();
+
 private:
     explicit DatabaseManager(QObject *parent = nullptr);
     ~DatabaseManager();

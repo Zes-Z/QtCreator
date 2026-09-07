@@ -5,6 +5,9 @@
 #include <QDir>
 #include <QDebug>
 #include <QDate> // 新增：用于获取当前日期
+#include <QDesktopServices>
+#include <QUrl>
+#include <QFileInfo>
 
 DatabaseManager& DatabaseManager::instance() {
     static DatabaseManager instance;
@@ -46,6 +49,13 @@ bool DatabaseManager::initDatabase() {
 
     qDebug() << "Database opened successfully at:" << dbPath;
 
+    // 性能：桌面单用户场景，WAL + NORMAL 可显著降低每次写操作的磁盘刷写与锁开销
+    {
+        QSqlQuery pragma(m_db);
+        pragma.exec("PRAGMA journal_mode = WAL");
+        pragma.exec("PRAGMA synchronous = NORMAL");
+    }
+
     // 创建 Tasks 表
     QSqlQuery query;
     QString createTableQuery = R"(
@@ -61,6 +71,11 @@ bool DatabaseManager::initDatabase() {
     if (!query.exec(createTableQuery)) {
         qCritical() << "Failed to create table:" << query.lastError().text();
         return false;
+    }
+
+    // 性能：任务按日期查询/排序很频繁，为 date 建索引（含置顶排序的预读）
+    if (!query.exec("CREATE INDEX IF NOT EXISTS idx_tasks_date ON Tasks(date)")) {
+        qWarning() << "Failed to create index:" << query.lastError().text();
     }
 
     return true;
@@ -204,4 +219,26 @@ bool DatabaseManager::rolloverTasksForToday() {
 
     qDebug() << "Successfully rolled over tasks from" << lastDate << "to" << todayStr;
     return true; // 跨日复制成功
+}
+
+// 在系统资源管理器中打开数据库文件所在的目录
+bool DatabaseManager::openDatabaseFolder() {
+    if (!m_db.isOpen()) {
+        qWarning() << "Database is not open.";
+        return false;
+    }
+
+    const QString dbFile = m_db.databaseName();
+    if (dbFile.isEmpty()) {
+        qWarning() << "Database file path is empty.";
+        return false;
+    }
+
+    // 打开包含 dailyup.db 的目录
+    const QUrl folderUrl = QUrl::fromLocalFile(QFileInfo(dbFile).absolutePath());
+    if (!QDesktopServices::openUrl(folderUrl)) {
+        qWarning() << "Failed to open folder:" << folderUrl;
+        return false;
+    }
+    return true;
 }

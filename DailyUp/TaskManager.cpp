@@ -267,3 +267,8 @@ void TaskManager::toggleTaskPin(int index) {
         loadTasks(m_currentDate);
     }
 }
+
+// 打开数据库文件所在目录（供 QML 按钮调用）
+void TaskManager::openDatabaseFolder() {
+    DatabaseManager::instance().openDatabaseFolder();
+}

@@ -1,63 +1,151 @@
 #include "services/SyncService.h"
 
+#include "core/AppLayout.h"
 #include "services/WebDavClient.h"
 #include "storage/MetadataStore.h"
 
-#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QStandardPaths>
-#include <QUrl>
 #include <QUuid>
-
-#include <algorithm>
 
 namespace litapp {
 
+namespace {
+
 // ============================================================
-// Constructor
+// HTTP 日期
+// ============================================================
+
+QDateTime parseHttpDate(const QString &value)
+{
+    const QString trimmed = value.trimmed();
+
+    if (trimmed.isEmpty()) {
+        return QDateTime();
+    }
+
+    // "Wed, 21 Oct 2015 07:28:00 GMT"
+    QDateTime result =
+        QDateTime::fromString(
+            trimmed,
+            Qt::RFC2822Date);
+
+    if (result.isValid()) {
+        return result;
+    }
+
+    // ISO 8601
+    result = QDateTime::fromString(
+        trimmed,
+        Qt::ISODate);
+
+    if (result.isValid()) {
+        return result;
+    }
+
+    const QStringList formats {
+        QStringLiteral("ddd, dd MMM yyyy HH:mm:ss 'GMT'"),
+        QStringLiteral("dddd, dd-MMM-yy HH:mm:ss 'GMT'"),
+        QStringLiteral("ddd MMM d HH:mm:ss yyyy"),
+        QStringLiteral("yyyy-MM-ddTHH:mm:ssZ")
+    };
+
+    for (const QString &format : formats) {
+
+        result = QDateTime::fromString(
+            trimmed,
+            format);
+
+        if (result.isValid()) {
+            return result;
+        }
+    }
+
+    return QDateTime();
+}
+
+// ============================================================
+// 名称安全
+// ============================================================
+
+// /a/b/c -> { /a, /a/b, /a/b/c }
+QStringList ancestorPaths(const QString &remotePath)
+{
+    const QString normalized =
+        layout::normalizeRemotePath(remotePath);
+
+    const QStringList parts =
+        normalized.split(
+            QLatin1Char('/'),
+            Qt::SkipEmptyParts);
+
+    QStringList result;
+    QString current;
+
+    for (const QString &part : parts) {
+
+        current += QLatin1Char('/') + part;
+        result.append(current);
+    }
+
+    return result;
+}
+
+bool isHiddenOrSystemEntry(const QString &name)
+{
+    return name.startsWith(QLatin1Char('.'))
+        || name.compare(
+               QStringLiteral("desktop.ini"),
+               Qt::CaseInsensitive) == 0;
+}
+
+} // namespace
+
+// ============================================================
+// Constructor / Destructor
 // ============================================================
 
 SyncService::SyncService(
-    WebDavClient *client,
+    WebDavClient *ownClient,
     QObject *parent)
     : QObject(parent)
-    , m_client(client)
+    , m_ownClient(ownClient)
     , m_timer(new QTimer(this))
 {
-    if (m_client) {
+    if (m_ownClient) {
 
         connect(
-            m_client,
+            m_ownClient,
             &WebDavClient::directoryListed,
             this,
-            &SyncService::handleDirectoryListed);
+            &SyncService::onDirectoryListed);
 
         connect(
-            m_client,
+            m_ownClient,
             &WebDavClient::directoryCreated,
             this,
-            &SyncService::handleDirectoryCreated);
+            &SyncService::onDirectoryCreated);
 
         connect(
-            m_client,
+            m_ownClient,
             &WebDavClient::uploadFinished,
             this,
-            &SyncService::handleUploadFinished);
+            &SyncService::onUploadFinished);
 
         connect(
-            m_client,
+            m_ownClient,
             &WebDavClient::downloadFinished,
             this,
-            &SyncService::handleDownloadFinished);
+            &SyncService::onDownloadFinished);
 
         connect(
-            m_client,
+            m_ownClient,
             &WebDavClient::removeFinished,
             this,
-            &SyncService::handleRemoveFinished);
+            &SyncService::onRemoveFinished);
     }
 
     m_timer->setInterval(180000);
@@ -66,366 +154,958 @@ SyncService::SyncService(
         m_timer,
         &QTimer::timeout,
         this,
-        &SyncService::autoSync);
+        &SyncService::onAutoSyncTimeout);
 }
 
+SyncService::~SyncService() = default;
 
 // ============================================================
-// Current space
+// Database
 // ============================================================
 
-FileSpace SyncService::currentSpace() const
+void SyncService::setDatabasePath(
+    const QString &databasePath)
 {
-    return m_activeSpace;
+    if (!databasePath.trimmed().isEmpty()) {
+        m_databasePath = databasePath;
+    }
 }
 
-QString SyncService::currentSourceId() const
+QString SyncService::databasePath() const
 {
-    return m_activeSourceId;
+    return m_databasePath;
 }
 
+bool SyncService::openStore(
+    MetadataStore &store) const
+{
+    return store.open(m_databasePath);
+}
 
 // ============================================================
-// Sync
+// WebDavClient 解析
 // ============================================================
+
+WebDavClient *SyncService::clientForSource(
+    const QString &sourceId)
+{
+    if (sourceId.trimmed().isEmpty()) {
+        return m_ownClient;
+    }
+
+    if (m_sourceClients.contains(sourceId)) {
+        return m_sourceClients.value(sourceId);
+    }
+
+    MetadataStore store;
+
+    if (!openStore(store)) {
+        return nullptr;
+    }
+
+    const GroupSource source =
+        store.sourceById(sourceId);
+
+    if (!source.isValid()) {
+        return nullptr;
+    }
+
+    auto *client = new WebDavClient(this);
+
+    client->configureTransient(
+        source.serverUrl,
+        source.username,
+        source.password);
+
+    connect(
+        client,
+        &WebDavClient::directoryListed,
+        this,
+        &SyncService::onDirectoryListed);
+
+    connect(
+        client,
+        &WebDavClient::directoryCreated,
+        this,
+        &SyncService::onDirectoryCreated);
+
+    connect(
+        client,
+        &WebDavClient::uploadFinished,
+        this,
+        &SyncService::onUploadFinished);
+
+    connect(
+        client,
+        &WebDavClient::downloadFinished,
+        this,
+        &SyncService::onDownloadFinished);
+
+    connect(
+        client,
+        &WebDavClient::removeFinished,
+        this,
+        &SyncService::onRemoveFinished);
+
+    m_sourceClients.insert(
+        sourceId,
+        client);
+
+    return client;
+}
+
+bool SyncService::isJobClient() const
+{
+    return m_job.active
+        && m_job.client != nullptr
+        && sender() == m_job.client;
+}
+
+bool SyncService::isSyncing() const
+{
+    return m_job.active;
+}
+
+QString SyncService::jobLabel() const
+{
+    switch (m_job.space) {
+
+    case FileSpace::MyDoc:
+        return QStringLiteral("my doc");
+
+    case FileSpace::GroupMe:
+        return m_job.groupId.isEmpty()
+            ? QStringLiteral("group me")
+            : m_job.groupId;
+
+    case FileSpace::GroupUs:
+        return QStringLiteral("group us / %1")
+            .arg(m_job.sourceId);
+    }
+
+    return QStringLiteral("unknown");
+}
+
+// ============================================================
+// 同步入口
+// ============================================================
+
+void SyncService::syncMyDoc()
+{
+    startJob(
+        FileSpace::MyDoc,
+        QString(),
+        QString(),
+        false);
+}
+
+void SyncService::syncGroupMe(
+    const QString &groupId)
+{
+    const QString directory =
+        groupId.trimmed().isEmpty()
+            ? layout::groupMeDirectoryName(0)
+            : groupId.trimmed();
+
+    startJob(
+        FileSpace::GroupMe,
+        directory,
+        QString(),
+        false);
+}
+
+void SyncService::syncGroupUs(
+    const QString &sourceId)
+{
+    if (sourceId.trimmed().isEmpty()) {
+
+        emit syncFinished(
+            false,
+            QStringLiteral(
+                "group us 缺少来源标识"));
+
+        return;
+    }
+
+    startJob(
+        FileSpace::GroupUs,
+        QString(),
+        sourceId.trimmed(),
+        true);
+}
+
+void SyncService::enqueueJob(
+    FileSpace space,
+    const QString &groupId,
+    const QString &sourceId,
+    bool readOnly)
+{
+    PendingJob job;
+
+    job.space = space;
+    job.groupId = groupId;
+    job.sourceId = sourceId;
+    job.readOnly = readOnly;
+
+    m_pendingJobs.append(job);
+
+    startNextQueuedJob();
+}
+
+void SyncService::startNextQueuedJob()
+{
+    if (m_job.active
+        || m_deleting
+        || m_pendingJobs.isEmpty()) {
+
+        return;
+    }
+
+    const PendingJob next =
+        m_pendingJobs.takeFirst();
+
+    startJob(
+        next.space,
+        next.groupId,
+        next.sourceId,
+        next.readOnly);
+}
+
+/*
+ * 我的账号：
+ *
+ *     my doc
+ *     + 每一个已存在的 group me 目录
+ */
+void SyncService::syncMyAccount()
+{
+    if (m_job.active || m_deleting) {
+        return;
+    }
+
+    m_pendingJobs.clear();
+
+    enqueueJob(
+        FileSpace::MyDoc,
+        QString(),
+        QString(),
+        false);
+
+    // ---- 已存在的群组目录 ----
+
+    QStringList groups;
+
+    MetadataStore store;
+
+    if (openStore(store)) {
+
+        const QVector<FileItem> items =
+            store.files(FileSpace::GroupMe);
+
+        for (const FileItem &item : items) {
+
+            if (item.groupId.isEmpty()) {
+                continue;
+            }
+
+            if (!groups.contains(item.groupId)) {
+                groups.append(item.groupId);
+            }
+        }
+    }
+
+    if (groups.isEmpty()) {
+        groups.append(layout::groupMeDirectoryName(0));
+    }
+
+    for (const QString &groupId : groups) {
+
+        enqueueJob(
+            FileSpace::GroupMe,
+            groupId,
+            QString(),
+            false);
+    }
+}
+
+void SyncService::syncAll()
+{
+    syncMyAccount();
+}
 
 void SyncService::syncSpace(
     int space,
     const QString &sourceId)
 {
-    if (m_syncInProgress) {
-        qWarning()
-        << "Sync already in progress.";
+    switch (static_cast<FileSpace>(space)) {
+
+    case FileSpace::MyDoc:
+        syncMyDoc();
+        return;
+
+    case FileSpace::GroupMe:
+        syncGroupMe(sourceId);
+        return;
+
+    case FileSpace::GroupUs:
+        syncGroupUs(sourceId);
         return;
     }
 
-    if (m_remoteDeletionInProgress) {
-        qWarning()
-        << "Remote deletion is in progress.";
-        return;
-    }
-
-    if (!m_client) {
-        emit syncFinished(
-            false,
-            QStringLiteral(
-                "WebDAV 客户端不可用"));
-        return;
-    }
-
-    if (space < static_cast<int>(FileSpace::MyDoc)
-        || space > static_cast<int>(FileSpace::GroupUs)) {
-
-        emit syncFinished(
-            false,
-            QStringLiteral(
-                "无效的同步空间"));
-
-        return;
-    }
-
-    m_activeSpace =
-        static_cast<FileSpace>(space);
-
-    m_activeSourceId = sourceId;
-
-    /*
-     * GroupUs 必须具有 sourceId。
-     *
-     * MyDoc / GroupMe 不要求 sourceId。
-     */
-    if (m_activeSpace == FileSpace::GroupUs
-        && m_activeSourceId.isEmpty()) {
-
-        emit syncFinished(
-            false,
-            QStringLiteral(
-                "GroupUs 缺少 sourceId"));
-
-        return;
-    }
-
-    m_syncInProgress = true;
-
-    m_hasError = false;
-    m_syncError.clear();
-
-    m_pendingOps = 0;
-    m_pendingDirectoryListings = 0;
-
-    m_remoteNames.clear();
-    m_remoteEntries.clear();
-    m_visitedDirs.clear();
-
-    m_directoryQueue.clear();
-    m_directoryQueueIndex = 0;
-
-    m_atomicFolderQueue.clear();
-    m_atomicFolderQueueIndex = 0;
-
-    m_currentAtomicFolder.clear();
-
-    m_uploadQueue.clear();
-    m_uploadQueueIndex = 0;
-
-    m_downloadQueue.clear();
-    m_downloadQueueIndex = 0;
-
-    const QString localRoot =
-        localSpaceRoot(
-            m_activeSpace,
-            m_activeSourceId);
-
-    if (!QDir(localRoot).exists()) {
-
-        if (!QDir().mkpath(localRoot)) {
-
-            finish(
-                false,
-                QStringLiteral(
-                    "无法创建本地同步目录：%1")
-                    .arg(localRoot));
-
-            return;
-        }
-    }
-
-    const QString remoteRoot =
-        normalizeRemotePath(
-            remoteSpaceRoot(
-                m_activeSpace));
-
-    qDebug()
-        << "========================================";
-
-    qDebug()
-        << "开始 WebDAV 同步";
-
-    qDebug()
-        << "space ="
-        << static_cast<int>(m_activeSpace);
-
-    qDebug()
-        << "sourceId ="
-        << m_activeSourceId;
-
-    qDebug()
-        << "localRoot ="
-        << localRoot;
-
-    qDebug()
-        << "remoteRoot ="
-        << remoteRoot;
-
-    qDebug()
-        << "========================================";
-
-    /*
-     * 先扫描远程空间。
-     *
-     * MyDoc:
-     *
-     *     /zesbks/
-     *
-     * GroupMe:
-     *
-     *     /zesbks/group/
-     *
-     * GroupUs:
-     *
-     *     远程账号的 /zesbks/group/
-     */
-    startRemoteScan();
+    emit syncFinished(
+        false,
+        QStringLiteral("无效的同步空间"));
 }
 
-
-// ============================================================
-// Active space
-// ============================================================
-
-void SyncService::setActiveSpace(
-    int space,
-    const QString &sourceId)
+/*
+ * 群组目录的远端根。
+ *
+ * 兼容两种布局：
+ *
+ *     zesbks/group/group me/   （默认，见 AppLayout）
+ *     zesbks/group me/
+ *
+ * 依据最近一次扫描 /zesbks 时实际看到的子目录判断。
+ * 没扫描过时用默认布局。
+ */
+QString SyncService::groupRootFor(
+    const QString &groupId) const
 {
-    if (space < static_cast<int>(FileSpace::MyDoc)
-        || space > static_cast<int>(FileSpace::GroupUs)) {
-        return;
+    const QString share =
+        layout::remoteShareRoot();
+
+    const QString directory =
+        groupId.trimmed().isEmpty()
+            ? layout::groupMeDirectoryName(0)
+            : groupId.trimmed();
+
+    const QString container =
+        QStringLiteral("group");
+
+    if (m_shareRootChildren.contains(container)) {
+
+        return share + QLatin1Char('/')
+            + container + QLatin1Char('/') + directory;
     }
 
-    m_activeSpace =
-        static_cast<FileSpace>(space);
+    if (m_shareRootChildren.contains(directory)) {
 
-    m_activeSourceId = sourceId;
-}
-
-
-// ============================================================
-// Auto sync
-// ============================================================
-
-void SyncService::startAutoSync(
-    int intervalMs)
-{
-    if (intervalMs <= 0) {
-        intervalMs = 180000;
+        return share + QLatin1Char('/') + directory;
     }
 
-    m_timer->setInterval(intervalMs);
-    m_timer->start();
-
-    qDebug()
-        << "WebDAV 自动同步已启动:"
-        << intervalMs
-        << "ms";
+    // 默认布局
+    return share + QLatin1Char('/')
+        + container + QLatin1Char('/') + directory;
 }
-
-void SyncService::stopAutoSync()
-{
-    m_timer->stop();
-
-    qDebug()
-        << "WebDAV 自动同步已停止";
-}
-
-void SyncService::autoSync()
-{
-    if (m_syncInProgress) {
-        return;
-    }
-
-    if (m_remoteDeletionInProgress) {
-        return;
-    }
-
-    syncSpace(
-        static_cast<int>(m_activeSpace),
-        m_activeSourceId);
-}
-
 
 // ============================================================
-// Local space root
+// 启动一次任务
 // ============================================================
 
-QString SyncService::localSpaceRoot(
+bool SyncService::startJob(
     FileSpace space,
-    const QString &sourceId) const
+    const QString &groupId,
+    const QString &sourceId,
+    bool readOnly)
 {
-    const QString base =
-        QStandardPaths::writableLocation(
-            QStandardPaths::DocumentsLocation)
-        + QStringLiteral("/LitApp/zesbks");
+    if (m_job.active) {
+
+        qWarning()
+            << "SyncService: 已有同步任务在进行";
+
+        return false;
+    }
+
+    if (m_deleting) {
+
+        qWarning()
+            << "SyncService: 正在执行远端删除";
+
+        return false;
+    }
+
+    WebDavClient *client =
+        clientForSource(sourceId);
+
+    if (!client) {
+
+        emit syncFinished(
+            false,
+            QStringLiteral(
+                "无法建立 WebDAV 连接（来源：%1）")
+                .arg(
+                    sourceId.isEmpty()
+                        ? QStringLiteral("我的账号")
+                        : sourceId));
+
+        return false;
+    }
+
+    QString remoteRoot;
 
     switch (space) {
 
     case FileSpace::MyDoc:
-        return QDir::cleanPath(
-            base + QStringLiteral("/my_doc"));
+        remoteRoot = layout::remoteShareRoot();
+        break;
 
     case FileSpace::GroupMe:
-        return QDir::cleanPath(
-            base + QStringLiteral("/group_me"));
+        remoteRoot = groupRootFor(
+            groupId.isEmpty()
+                ? layout::groupMeDirectoryName(0)
+                : groupId);
+        break;
 
     case FileSpace::GroupUs:
     {
-        /*
-         * sourceId 是逻辑来源标识。
-         *
-         * 注意：
-         * 这里仅用于本地隔离。
-         *
-         * 它不参与 WebDAV 的物理路径。
-         */
-        QString safeSourceId =
-            sourceId.trimmed();
+        MetadataStore store;
 
-        if (safeSourceId.isEmpty()) {
-            safeSourceId =
-                QStringLiteral("default");
+        if (!openStore(store)) {
+
+            emit syncFinished(
+                false,
+                QStringLiteral("无法打开本地数据库"));
+
+            return false;
         }
 
-        safeSourceId.replace(
-            QLatin1Char('/'),
-            QLatin1Char('_'));
+        const GroupSource source =
+            store.sourceById(sourceId);
 
-        safeSourceId.replace(
-            QLatin1Char('\\'),
-            QLatin1Char('_'));
+        if (!source.isValid() || source.remoteRoot.isEmpty()) {
 
-        return QDir::cleanPath(
-            base
-            + QStringLiteral("/group_us/")
-            + safeSourceId);
+            emit syncFinished(
+                false,
+                QStringLiteral(
+                    "群组来源 %1 未正确配置")
+                    .arg(sourceId));
+
+            return false;
+        }
+
+        remoteRoot = source.remoteRoot;
+        break;
     }
     }
 
-    return QDir::cleanPath(base);
+    remoteRoot =
+        layout::normalizeRemotePath(remoteRoot);
+
+    // ---- 重置任务 ----
+
+    m_job = Job();
+
+    m_job.active = true;
+    m_job.space = space;
+    m_job.groupId =
+        space == FileSpace::GroupMe
+            ? (groupId.isEmpty()
+                   ? layout::groupMeDirectoryName(0)
+                   : groupId)
+            : QString();
+    m_job.sourceId = sourceId;
+    m_job.remoteRoot = remoteRoot;
+    m_job.readOnly = readOnly
+        || space == FileSpace::GroupUs;
+    m_job.client = client;
+
+    qDebug()
+        << "========================================";
+    qDebug() << "SyncService: 开始同步" << jobLabel();
+    qDebug() << "remoteRoot =" << remoteRoot;
+    qDebug() << "readOnly   =" << m_job.readOnly;
+    qDebug() << "========================================";
+
+    beginRemoteScan();
+
+    return true;
 }
 
-
 // ============================================================
-// Remote space root
+// 远端扫描
 // ============================================================
 
-QString SyncService::remoteSpaceRoot(
-    FileSpace space) const
+void SyncService::beginRemoteScan()
 {
-    switch (space) {
-
-    case FileSpace::MyDoc:
-        return QStringLiteral("/zesbks");
-
-    case FileSpace::GroupMe:
-        return QStringLiteral("/zesbks/group");
-
-    case FileSpace::GroupUs:
-        /*
-         * GroupUs 使用被连接账号的 /zesbks/group/。
-         *
-         * sourceId 不改变远程账号内部的路径。
-         */
-        return QStringLiteral("/zesbks/group");
+    if (!m_job.active || !m_job.client) {
+        return;
     }
 
-    return QStringLiteral("/zesbks");
+    m_job.visited.clear();
+    m_job.folders.clear();
+    m_job.folderIndexByPath.clear();
+    m_job.pendingListings = 0;
+
+    requestFolderListing(
+        m_job.remoteRoot);
 }
 
+void SyncService::requestFolderListing(
+    const QString &remotePath)
+{
+    const QString normalized =
+        layout::normalizeRemotePath(remotePath);
+
+    if (m_job.visited.contains(normalized)) {
+        return;
+    }
+
+    m_job.visited.insert(normalized);
+
+    ++m_job.pendingListings;
+
+    m_job.client->listDirectory(normalized);
+}
+
+QVector<SyncService::RemoteEntry> SyncService::toRemoteEntries(
+    const QVariantList &entries)
+{
+    QVector<RemoteEntry> result;
+
+    result.reserve(entries.size());
+
+    for (const QVariant &value : entries) {
+
+        const QVariantMap map =
+            value.toMap();
+
+        const QString rawPath =
+            map.value(
+                   QStringLiteral("path"))
+                .toString();
+
+        if (rawPath.isEmpty()) {
+            continue;
+        }
+
+        RemoteEntry entry;
+
+        entry.path =
+            layout::normalizeRemotePath(rawPath);
+
+        entry.name =
+            map.value(
+                   QStringLiteral("name"))
+                .toString();
+
+        if (entry.name.isEmpty()) {
+
+            const int slash =
+                entry.path.lastIndexOf(
+                    QLatin1Char('/'));
+
+            entry.name =
+                slash >= 0
+                    ? entry.path.mid(slash + 1)
+                    : entry.path;
+        }
+
+        entry.isDirectory =
+            map.value(
+                   QStringLiteral("isDirectory"))
+                .toBool();
+
+        entry.size =
+            map.value(
+                   QStringLiteral("size"))
+                .toLongLong();
+
+        entry.modified =
+            parseHttpDate(
+                map.value(
+                       QStringLiteral("modified"))
+                    .toString());
+
+        result.append(entry);
+    }
+
+    return result;
+}
+
+void SyncService::onDirectoryListed(
+    const QString &path,
+    const QVariantList &entries,
+    const QString &error)
+{
+    if (!isJobClient()) {
+        return;
+    }
+
+    if (m_job.pendingListings > 0) {
+        --m_job.pendingListings;
+    }
+
+    const QString normalized =
+        layout::normalizeRemotePath(path);
+
+    const bool isRootListing =
+        normalized == m_job.remoteRoot;
+
+    if (!error.isEmpty()) {
+
+        qWarning()
+            << "SyncService: PROPFIND 失败"
+            << normalized
+            << error;
+
+        if (isRootListing) {
+
+            /*
+             * 自己的账号：根目录读不到，最常见的原因是
+             * 它还没有在远端创建。
+             *
+             * 先把中间层级补齐，再重扫一次，
+             * 这样首次连接、或群组布局不同都能自愈。
+             */
+            if (!m_job.readOnly
+                && !m_job.bootstrappedRoot) {
+
+                m_job.bootstrappedRoot = true;
+
+                const QStringList ancestors =
+                    ancestorPaths(m_job.remoteRoot);
+
+                if (!ancestors.isEmpty()) {
+
+                    qDebug()
+                        << "SyncService: 尝试补建远端根目录"
+                        << ancestors;
+
+                    m_job.directoryQueue = ancestors;
+                    m_job.directoryIndex = 0;
+                    m_job.bootstrappingRoot = true;
+
+                    createNextDirectory();
+
+                    return;
+                }
+            }
+
+            /*
+             * 补建之后仍然读不到，如实上报。
+             */
+            m_job.hasError = true;
+
+            if (m_job.error.isEmpty()) {
+
+                QString message =
+                    QStringLiteral("远端根目录 %1 读取失败：%2")
+                        .arg(
+                            normalized,
+                            error);
+
+                const bool looksLikeWebPage =
+                    error.contains(
+                        QStringLiteral("不是 WebDAV multistatus"))
+                    || error.contains(
+                        QStringLiteral("不是有效的 XML"));
+
+                if (looksLikeWebPage) {
+
+                    message += QStringLiteral(
+                        "\n提示：该地址返回的是网页而不是 WebDAV 内容,"
+                        " 请确认服务器地址指向 DAV 入口。");
+                }
+
+                m_job.error = message;
+            }
+        }
+
+    } else {
+
+        const QVector<RemoteEntry> remoteEntries =
+            toRemoteEntries(entries);
+
+        if (isRootListing) {
+
+            /*
+             * 记录 /zesbks 下实际存在的子目录，
+             * 用来判断群组目录的真实布局。
+             */
+            if (normalized == layout::remoteShareRoot()) {
+
+                QSet<QString> children;
+
+                for (const RemoteEntry &entry : remoteEntries) {
+
+                    if (entry.isDirectory
+                        && entry.path != normalized) {
+
+                        children.insert(entry.name);
+                    }
+                }
+
+                m_shareRootChildren = children;
+            }
+
+            for (const RemoteEntry &entry : remoteEntries) {
+
+                if (!entry.isDirectory) {
+                    continue;
+                }
+
+                if (entry.path == normalized) {
+                    continue;
+                }
+
+                /*
+                 * my doc 的根是 /zesbks，
+                 * 它下面还有 /zesbks/group。
+                 *
+                 * 这个容器不是原子文件夹。
+                 */
+                if (layout::isReservedShareEntry(entry.name)) {
+                    continue;
+                }
+
+                RemoteFolder folder;
+
+                folder.name = entry.name;
+                folder.remotePath = entry.path;
+
+                m_job.folderIndexByPath.insert(
+                    entry.path,
+                    m_job.folders.size());
+
+                m_job.folders.append(folder);
+
+                requestFolderListing(entry.path);
+            }
+
+        } else {
+
+            const int index =
+                m_job.folderIndexByPath.value(
+                    normalized,
+                    -1);
+
+            if (index >= 0
+                && index < m_job.folders.size()) {
+
+                QVector<RemoteEntry> files;
+
+                for (const RemoteEntry &entry : remoteEntries) {
+
+                    if (entry.isDirectory) {
+                        continue;
+                    }
+
+                    if (entry.path == normalized) {
+                        continue;
+                    }
+
+                    if (isHiddenOrSystemEntry(entry.name)) {
+                        continue;
+                    }
+
+                    files.append(entry);
+                }
+
+                m_job.folders[index].files = files;
+            }
+        }
+    }
+
+    if (m_job.pendingListings > 0) {
+        return;
+    }
+
+    afterListingComplete();
+}
 
 // ============================================================
-// Metadata loading
+// 扫描结束
 // ============================================================
 
-QVector<FileItem> SyncService::loadSpaceItems(
+void SyncService::afterListingComplete()
+{
+    if (!m_job.active) {
+        return;
+    }
+
+    qDebug()
+        << "SyncService: 远端发现"
+        << m_job.folders.size()
+        << "个原子文件夹";
+
+    // ---- 只读来源：只拉取，到此结束 ----
+
+    if (m_job.readOnly) {
+
+        reconcileWithStore();
+
+        if (m_job.hasError) {
+
+            finishJob(false, m_job.error);
+
+        } else {
+
+            finishJob(
+                true,
+                QStringLiteral("%1 已更新（只读）")
+                    .arg(jobLabel()));
+        }
+
+        return;
+    }
+
+    /*
+     * ---- 先清理墓碑 ----
+     *
+     * 本地删除 / 重命名后残留的远端路径
+     * 必须先删掉，否则 reconcile 会把它们
+     * 当成「远端新增」重新拉回应用。
+     */
+
+    m_job.pendingDeleteQueue.clear();
+    m_job.pendingDeleteIndex = 0;
+    m_job.drainingDeletes = false;
+
+    MetadataStore store;
+
+    if (openStore(store)) {
+
+        m_job.pendingDeleteQueue =
+            store.pendingDeletes(m_job.sourceId);
+    }
+
+    if (!m_job.pendingDeleteQueue.isEmpty()) {
+
+        m_job.drainingDeletes = true;
+        deleteNextPendingDelete();
+
+        return;
+    }
+
+    continueAfterDeletes();
+}
+
+// ============================================================
+// 墓碑删除之后继续同步
+// ============================================================
+
+void SyncService::continueAfterDeletes()
+{
+    if (!m_job.active) {
+        return;
+    }
+
+    // ---- 远端 -> 应用内 ----
+
+    reconcileWithStore();
+
+    // ---- 本地 -> 远端 ----
+
+    prepareUploads();
+
+    if (!m_job.directoryQueue.isEmpty()) {
+
+        startDirectoryCreation();
+
+        return;
+    }
+
+    startUploads();
+}
+
+// ============================================================
+// 删除墓碑指向的远端残留
+// ============================================================
+
+void SyncService::deleteNextPendingDelete()
+{
+    if (!m_job.active || !m_job.drainingDeletes) {
+        return;
+    }
+
+    if (m_job.pendingDeleteIndex
+        >= m_job.pendingDeleteQueue.size()) {
+
+        m_job.drainingDeletes = false;
+
+        continueAfterDeletes();
+
+        return;
+    }
+
+    const QPair<QString, bool> entry =
+        m_job.pendingDeleteQueue.at(
+            m_job.pendingDeleteIndex);
+
+    ++m_job.pendingDeleteIndex;
+
+    qDebug()
+        << "SyncService: 清理远端残留"
+        << entry.first
+        << (entry.second ? "(目录)" : "(文件)");
+
+    m_job.client->removeFile(
+        entry.first,
+        entry.second);
+}
+
+// ============================================================
+// 查询辅助
+// ============================================================
+
+QVector<FileItem> SyncService::storeChildren(
+    const QString &parentId,
     FileSpace space,
-    const QString &sourceId) const
+    const QString &sourceId,
+    const QString &groupId) const
 {
     QVector<FileItem> result;
 
     MetadataStore store;
 
-    if (!store.open(m_databasePath)) {
+    if (!openStore(store)) {
+        return result;
+    }
+
+    const QVector<FileItem> children =
+        store.childrenOf(
+            parentId,
+            space);
+
+    for (const FileItem &child : children) {
+
+        if ((child.sourceId) != sourceId) {
+            continue;
+        }
+
+        if (space == FileSpace::GroupMe
+            && child.groupId != groupId) {
+            continue;
+        }
+
+        result.append(child);
+    }
+
+    return result;
+}
+
+QVector<FileItem> SyncService::allItemsOfJob() const
+{
+    QVector<FileItem> result;
+
+    MetadataStore store;
+
+    if (!openStore(store)) {
         return result;
     }
 
     const QVector<FileItem> all =
-        store.files(space);
+        store.files(m_job.space);
 
-    /*
-     * MyDoc / GroupMe：
-     *
-     * 直接使用对应 space。
-     *
-     * GroupUs：
-     *
-     * 必须再按照 sourceId 隔离。
-     */
     for (const FileItem &item : all) {
 
-        if (space == FileSpace::GroupUs) {
+        if (item.sourceId != m_job.sourceId) {
+            continue;
+        }
 
-            if (item.sourceId != sourceId) {
-                continue;
-            }
+        if (m_job.space == FileSpace::GroupMe
+            && item.groupId != m_job.groupId) {
+            continue;
         }
 
         result.append(item);
@@ -434,915 +1114,521 @@ QVector<FileItem> SyncService::loadSpaceItems(
     return result;
 }
 
-
-// ============================================================
-// Descendants
-// ============================================================
-
-QVector<FileItem> SyncService::descendantItems(
-    const QString &parentId,
-    FileSpace space,
-    const QString &sourceId) const
+FileItem SyncService::findAtomicFolderByName(
+    const QString &name) const
 {
-    QVector<FileItem> result;
-
-    const QVector<FileItem> all =
-        loadSpaceItems(
-            space,
-            sourceId);
-
-    /*
-     * parentId 是全局唯一对象 ID。
-     *
-     * 因此不需要通过 WebDAV 路径寻找。
-     */
-
-    QList<QString> queue;
-
-    queue.append(parentId);
-
-    while (!queue.isEmpty()) {
-
-        const QString currentParent =
-            queue.takeFirst();
-
-        for (const FileItem &item : all) {
-
-            if (item.parentId != currentParent) {
-                continue;
-            }
-
-            result.append(item);
-
-            if (item.isFolder()) {
-                queue.append(item.id);
-            }
-        }
-    }
-
-    return result;
-}
-
-
-// ============================================================
-// Atomic Folder
-// ============================================================
-
-bool SyncService::isAtomicFolder(
-    const FileItem &item) const
-{
-    return item.objectType ==
-           FileObjectType::AtomicFolder;
-}
-
-bool SyncService::isAtomicFile(
-    const FileItem &item) const
-{
-    return item.objectType ==
-           FileObjectType::AtomicFile;
-}
-
-bool SyncService::isLocalAtomicFolder(
-    const QString &path) const
-{
-    const QFileInfo info(path);
-
-    return info.exists()
-           && info.isDir();
-}
-
-
-// ============================================================
-// Atomic Folder files
-// ============================================================
-
-QStringList SyncService::collectAtomicFolderFiles(
-    const QString &atomicFolderPath) const
-{
-    QStringList result;
-
-    if (!isLocalAtomicFolder(
-            atomicFolderPath)) {
-        return result;
-    }
-
-    QDirIterator iterator(
-        atomicFolderPath,
-        QDir::Files
-            | QDir::NoDotAndDotDot,
-        QDirIterator::Subdirectories);
-
-    while (iterator.hasNext()) {
-
-        const QString path =
-            QDir::cleanPath(
-                iterator.next());
-
-        const QFileInfo info(path);
-
-        if (!info.exists()
-            || !info.isFile()) {
-            continue;
-        }
-
-        result.append(path);
-    }
-
-    return result;
-}
-
-QStringList SyncService::atomicFolderFiles(
-    const FileItem &atomicFolder) const
-{
-    QString folderPath;
-
-    /*
-     * FileService 当前设计中：
-     *
-     * AtomicFolder.localPath
-     *
-     * 指向 Atomic File。
-     *
-     * 因此这里取其 parent directory。
-     */
-    if (!atomicFolder.localPath.isEmpty()) {
-
-        const QFileInfo info(
-            atomicFolder.localPath);
-
-        if (info.exists()
-            && info.isFile()) {
-
-            folderPath =
-                info.absolutePath();
-
-        } else if (info.exists()
-                   && info.isDir()) {
-
-            folderPath =
-                info.absoluteFilePath();
-
-        } else {
-
-            /*
-             * 文件不存在时仍然根据 path 推导。
-             */
-            folderPath =
-                info.absolutePath();
-        }
-    }
-
-    if (folderPath.isEmpty()) {
-        return {};
-    }
-
-    return collectAtomicFolderFiles(
-        folderPath);
-}
-
-
-// ============================================================
-// Find local Atomic Folder
-// ============================================================
-
-QString SyncService::atomicFolderForLocalFile(
-    const QString &localFilePath) const
-{
-    const QString root =
-        QDir::cleanPath(
-            localSpaceRoot(
-                m_activeSpace,
-                m_activeSourceId));
-
-    const QString file =
-        QDir::cleanPath(
-            localFilePath);
-
-    if (!file.startsWith(
-            root + QLatin1Char('/'))) {
-        return QString();
-    }
-
-    const QString relative =
-        file.mid(
-            root.length() + 1);
-
-    const int slash =
-        relative.indexOf(
-            QLatin1Char('/'));
-
-    if (slash < 0) {
-        return QString();
-    }
-
-    const QString firstComponent =
-        relative.left(slash);
-
-    if (firstComponent.isEmpty()) {
-        return QString();
-    }
-
-    return QDir::cleanPath(
-        root
-        + QLatin1Char('/')
-        + firstComponent);
-}
-
-
-// ============================================================
-// Remote Atomic Folder path
-// ============================================================
-
-QString SyncService::remoteAtomicFolderPathForItem(
-    const FileItem &item) const
-{
-    if (!isAtomicFolder(item)) {
-        return QString();
-    }
-
-    const QString root =
-        normalizeRemotePath(
-            remoteSpaceRoot(
-                item.space));
-
-    if (root == QStringLiteral("/")) {
-        return QString();
-    }
-
-    if (item.name.isEmpty()) {
-        return QString();
-    }
-
-    return normalizeRemotePath(
-        root
-        + QLatin1Char('/')
-        + item.name);
-}
-
-
-// ============================================================
-// Remote Atomic File path
-// ============================================================
-
-QString SyncService::remoteAtomicFilePathForItem(
-    const FileItem &item) const
-{
-    if (!isAtomicFile(item)) {
-        return QString();
-    }
-
-    /*
-     * AtomicFile 自身不通过 parentId 直接映射 App hierarchy。
-     *
-     * 找到其 Atomic Folder 后：
-     *
-     *     /AtomicFolder/AtomicFile
-     */
-
-    const QVector<FileItem> all =
-        loadSpaceItems(
-            item.space,
-            item.sourceId);
-
-    FileItem atomicFolder;
-
-    for (const FileItem &candidate : all) {
-
-        if (!isAtomicFolder(candidate)) {
-            continue;
-        }
-
-        if (candidate.id == item.parentId) {
-            atomicFolder = candidate;
-            break;
-        }
-    }
-
-    if (!atomicFolder.isValid()) {
-        return QString();
-    }
-
-    const QString folderPath =
-        remoteAtomicFolderPathForItem(
-            atomicFolder);
-
-    if (folderPath.isEmpty()) {
-        return QString();
-    }
-
-    return normalizeRemotePath(
-        folderPath
-        + QLatin1Char('/')
-        + item.name);
-}
-
-
-// ============================================================
-// Remote Atomic Folder path from local path
-// ============================================================
-
-QString SyncService::remoteAtomicFolderPathForLocalPath(
-    const QString &localAtomicFolderPath) const
-{
-    const QString root =
-        QDir::cleanPath(
-            localSpaceRoot(
-                m_activeSpace,
-                m_activeSourceId));
-
-    const QString folder =
-        QDir::cleanPath(
-            localAtomicFolderPath);
-
-    if (!folder.startsWith(
-            root + QLatin1Char('/'))) {
-        return QString();
-    }
-
-    const QString relative =
-        folder.mid(
-            root.length() + 1);
-
-    /*
-     * 本地 Atomic Folder 作为本地 workspace
-     * 的一级物理目录。
-     *
-     * 注意：
-     *
-     * 这里只是 Atomic Folder 的物理容器，
-     * 不是 App folder hierarchy。
-     */
-    if (relative.isEmpty()
-        || relative.contains(
-            QLatin1Char('/'))) {
-        return QString();
-    }
-
-    return normalizeRemotePath(
-        remoteSpaceRoot(
-            m_activeSpace)
-        + QLatin1Char('/')
-        + relative);
-}
-
-
-// ============================================================
-// Start remote scan
-// ============================================================
-
-void SyncService::startRemoteScan()
-{
-    const QString root =
-        normalizeRemotePath(
-            remoteSpaceRoot(
-                m_activeSpace));
-
-    if (m_visitedDirs.contains(root)) {
-        return;
-    }
-
-    m_visitedDirs.insert(root);
-
-    ++m_pendingDirectoryListings;
-
-    m_client->listDirectory(root);
-}
-
-
-// ============================================================
-// Scan remote directory
-// ============================================================
-
-void SyncService::scanRemoteDirectory(
-    const QString &remotePath)
-{
-    const QString normalized =
-        normalizeRemotePath(remotePath);
-
-    if (m_visitedDirs.contains(normalized)) {
-        return;
-    }
-
-    m_visitedDirs.insert(normalized);
-
-    ++m_pendingDirectoryListings;
-
-    m_client->listDirectory(normalized);
-}
-
-
-// ============================================================
-// Remote directory listed
-// ============================================================
-
-void SyncService::handleDirectoryListed(
-    const QString &path,
-    const QVariantList &entries,
-    const QString &error)
-{
-    if (!m_syncInProgress) {
-        return;
-    }
-
-    if (m_pendingDirectoryListings > 0) {
-        --m_pendingDirectoryListings;
-    }
-
-    const QString normalizedPath =
-        normalizeRemotePath(path);
-
-    if (!error.isEmpty()) {
-
-        /*
-         * /zesbks 或 /zesbks/group 不存在：
-         *
-         * 不立即认为同步失败。
-         *
-         * 后续上传阶段会尝试创建。
-         */
-        qWarning()
-            << "远程目录读取失败:"
-            << normalizedPath
-            << error;
-
-    } else {
-
-        for (const QVariant &value : entries) {
-
-            const QVariantMap map =
-                value.toMap();
-
-            QString entryPath =
-                map.value(
-                       QStringLiteral("path"))
-                    .toString();
-
-            if (entryPath.isEmpty()) {
-                continue;
-            }
-
-            entryPath =
-                normalizeRemotePath(
-                    entryPath);
-
-            const bool isDirectory =
-                map.value(
-                       QStringLiteral("isDirectory"))
-                    .toBool();
-
-            if (isDirectory) {
-
-                /*
-                 * 当前空间的根目录下面：
-                 *
-                 * Atomic Folder
-                 *
-                 * 但 GroupMe / GroupUs 的 root
-                 * 本身已经是 /zesbks/group。
-                 *
-                 * Atomic Folder 内部目录还需要递归。
-                 */
-                if (!m_visitedDirs.contains(
-                        entryPath)) {
-
-                    m_visitedDirs.insert(
-                        entryPath);
-
-                    ++m_pendingDirectoryListings;
-
-                    m_client->listDirectory(
-                        entryPath);
-                }
-
-            } else {
-
-                /*
-                 * 只记录当前同步空间下的文件。
-                 */
-                if (!isRemotePathInCurrentSpace(
-                        entryPath)) {
-                    continue;
-                }
-
-                m_remoteEntries.append(map);
-
-                m_remoteNames.insert(
-                    entryPath);
-            }
-        }
-    }
-
-    /*
-     * 所有远程目录扫描结束。
-     */
-    if (m_pendingDirectoryListings > 0) {
-        return;
-    }
-
-    /*
-     * 远程扫描完成。
-     *
-     * 开始处理本地 Atomic Folder。
-     */
-    scanLocalFiles();
-
-    /*
-     * 准备需要创建的远程目录。
-     */
-    for (const QString &folderPath :
-         std::as_const(
-             m_atomicFolderQueue)) {
-
-        /*
-         * 这里 folderPath 是本地路径。
-         */
-        const QVector<FileItem> items =
-            loadSpaceItems(
-                m_activeSpace,
-                m_activeSourceId);
-
-        for (const FileItem &item : items) {
-
-            if (!isAtomicFolder(item)) {
-                continue;
-            }
-
-            QString localFolder;
-
-            if (!item.localPath.isEmpty()) {
-
-                const QFileInfo info(
-                    item.localPath);
-
-                if (info.exists()
-                    && info.isFile()) {
-
-                    localFolder =
-                        info.absolutePath();
-
-                } else if (info.exists()
-                           && info.isDir()) {
-
-                    localFolder =
-                        info.absoluteFilePath();
-                } else {
-
-                    localFolder =
-                        info.absolutePath();
-                }
-            }
-
-            if (QDir::cleanPath(localFolder)
-                != QDir::cleanPath(folderPath)) {
-                continue;
-            }
-
-            addAtomicFolderDirectories(item);
-            break;
-        }
-    }
-
-    /*
-     * 没有需要创建的目录。
-     */
-    if (m_directoryQueue.isEmpty()) {
-
-        startUploads();
-
-        return;
-    }
-
-    startDirectoryCreation();
-}
-
-
-// ============================================================
-// Scan local files
-// ============================================================
-
-void SyncService::scanLocalFiles()
-{
-    m_atomicFolderQueue.clear();
-    m_atomicFolderQueueIndex = 0;
-
-    m_uploadQueue.clear();
-    m_uploadQueueIndex = 0;
-
     const QVector<FileItem> items =
-        loadSpaceItems(
-            m_activeSpace,
-            m_activeSourceId);
+        allItemsOfJob();
 
-    /*
-     * 优先使用 MetadataStore。
-     *
-     * AtomicFolder 是逻辑对象。
-     */
     for (const FileItem &item : items) {
 
-        if (!isAtomicFolder(item)) {
+        if (item.objectType != FileObjectType::AtomicFolder) {
             continue;
         }
 
-        if (item.localPath.isEmpty()) {
+        if (item.name.compare(
+                name,
+                Qt::CaseSensitive) == 0) {
+
+            return item;
+        }
+    }
+
+    return FileItem();
+}
+
+// ============================================================
+// 物化：远端 -> SQLite
+// ============================================================
+
+void SyncService::reconcileWithStore()
+{
+    MetadataStore store;
+
+    if (!openStore(store)) {
+        return;
+    }
+
+    /*
+     * 只有在远端扫描可信时才允许「删除本地」。
+     *
+     * 否则一旦服务器返回的是登录页、错误页或任何
+     * 非 WebDAV 内容，扫描结果会被当成「远端为空」，
+     * 把用户整个库的元数据清空。
+     */
+    const bool mayPrune = !m_job.hasError;
+
+    if (!mayPrune) {
+        qWarning()
+            << "SyncService: 远端扫描不可信，跳过本地清理";
+    }
+
+    /*
+     * 应用内的原子文件夹一律挂在
+     * 对应空间的根上（parentId 为空）。
+     *
+     * 用户之后可以把它移进子分类文件夹，
+     * 那只是改 parentId，与远端无关。
+     */
+
+    // ---- 现有的一级对象 ----
+
+    QHash<QString, FileItem> existingFolders;
+
+    const QVector<FileItem> roots =
+        storeChildren(
+            QString(),
+            m_job.space,
+            m_job.sourceId,
+            m_job.groupId);
+
+    for (const FileItem &item : roots) {
+
+        if (item.objectType
+            != FileObjectType::AtomicFolder) {
             continue;
         }
 
-        const QFileInfo info(
-            item.localPath);
+        existingFolders.insert(
+            item.name,
+            item);
+    }
 
-        QString localFolder;
+    /*
+     * 仍带墓碑的远端路径暂时不算「远端存在」，
+     * 避免删除失败时被重新拉回应用。
+     */
+    QSet<QString> tombstoned;
 
-        if (info.exists()
-            && info.isFile()) {
+    {
+        const auto pending =
+            store.pendingDeletes(m_job.sourceId);
 
-            localFolder =
-                info.absolutePath();
+        for (const auto &entry : pending) {
+            tombstoned.insert(entry.first);
+        }
+    }
 
-        } else if (info.exists()
-                   && info.isDir()) {
+    QSet<QString> remoteNames;
 
-            localFolder =
-                info.absoluteFilePath();
+    for (const RemoteFolder &folder : m_job.folders) {
+
+        if (tombstoned.contains(folder.remotePath)) {
+            continue;
+        }
+
+        remoteNames.insert(folder.name);
+    }
+
+    // ---- 远端有 / 本地没有 -> 新增；两边都有 -> 更新 ----
+
+    for (const RemoteFolder &folder : m_job.folders) {
+
+        if (tombstoned.contains(folder.remotePath)) {
+            continue;
+        }
+
+        FileItem atomicFolder =
+            existingFolders.value(folder.name);
+
+        if (atomicFolder.isValid()) {
+
+            atomicFolder.remotePath = folder.remotePath;
+            atomicFolder.syncState = SyncState::Synced;
+            atomicFolder.syncError.clear();
+
+            store.updateFile(atomicFolder);
 
         } else {
 
-            localFolder =
-                info.absolutePath();
-        }
+            atomicFolder = FileItem();
 
-        if (!localFolder.isEmpty()
-            && isLocalAtomicFolder(
-                localFolder)) {
+            atomicFolder.id =
+                QUuid::createUuid().toString(
+                    QUuid::WithoutBraces);
 
-            if (!m_atomicFolderQueue.contains(
-                    localFolder)) {
+            atomicFolder.parentId = QString();
 
-                m_atomicFolderQueue.append(
-                    localFolder);
-            }
-        }
-    }
+            atomicFolder.name = folder.name;
 
-    /*
-     * 兼容本地 workspace 中已经存在、
-     * 但 metadata 尚未建立的 Atomic Folder。
-     *
-     * 只扫描 workspace 一级目录。
-     */
-    const QString root =
-        localSpaceRoot(
-            m_activeSpace,
-            m_activeSourceId);
+            atomicFolder.objectType =
+                FileObjectType::AtomicFolder;
 
-    QDir rootDir(root);
+            atomicFolder.space = m_job.space;
+            atomicFolder.sourceId = m_job.sourceId;
+            atomicFolder.groupId = m_job.groupId;
 
-    const QFileInfoList dirs =
-        rootDir.entryInfoList(
-            QDir::Dirs
-                | QDir::NoDotAndDotDot,
-            QDir::Name);
-
-    for (const QFileInfo &info : dirs) {
-
-        const QString folder =
-            QDir::cleanPath(
-                info.absoluteFilePath());
-
-        if (!m_atomicFolderQueue.contains(
-                folder)) {
+            atomicFolder.remotePath = folder.remotePath;
 
             /*
-             * 这里只将一级目录作为
-             * Atomic Folder candidate。
+             * localPath 为空表示：
+             *
+             *     尚未下载，属于云端条目。
+             *
+             * 双击时才按镜像路径下载。
              */
-            m_atomicFolderQueue.append(
-                folder);
+            atomicFolder.localPath = QString();
+
+            atomicFolder.syncState = SyncState::Synced;
+
+            atomicFolder.modifiedTime =
+                QDateTime::currentDateTime();
+
+            store.addFile(atomicFolder);
+        }
+
+        // ---- 原子文件 ----
+
+        QHash<QString, FileItem> existingFiles;
+
+        const QVector<FileItem> children =
+            storeChildren(
+                atomicFolder.id,
+                m_job.space,
+                m_job.sourceId,
+                m_job.groupId);
+
+        for (const FileItem &child : children) {
+
+            if (child.objectType
+                != FileObjectType::AtomicFile) {
+                continue;
+            }
+
+            existingFiles.insert(
+                child.name,
+                child);
+        }
+
+        QSet<QString> remoteFileNames;
+
+        for (const RemoteEntry &file : folder.files) {
+
+            remoteFileNames.insert(file.name);
+
+            FileItem atomicFile =
+                existingFiles.value(file.name);
+
+            if (atomicFile.isValid()) {
+
+                atomicFile.remotePath = file.path;
+                atomicFile.size = file.size;
+                atomicFile.syncState = SyncState::Synced;
+
+                store.updateFile(atomicFile);
+
+                continue;
+            }
+
+            atomicFile = FileItem();
+
+            atomicFile.id =
+                QUuid::createUuid().toString(
+                    QUuid::WithoutBraces);
+
+            atomicFile.parentId = atomicFolder.id;
+            atomicFile.name = file.name;
+
+            atomicFile.objectType =
+                FileObjectType::AtomicFile;
+
+            atomicFile.space = m_job.space;
+            atomicFile.sourceId = m_job.sourceId;
+            atomicFile.groupId = m_job.groupId;
+
+            atomicFile.remotePath = file.path;
+            atomicFile.localPath = QString();
+
+            atomicFile.extension =
+                QFileInfo(file.name)
+                    .suffix()
+                    .toLower();
+
+            atomicFile.size = file.size;
+            atomicFile.modifiedTime =
+                file.modified.isValid()
+                    ? file.modified
+                    : QDateTime::currentDateTime();
+
+            atomicFile.syncState = SyncState::Synced;
+
+            store.addFile(atomicFile);
+        }
+
+        // ---- 远端已删除的子文件 ----
+
+        if (!mayPrune) {
+            continue;
+        }
+
+        for (const FileItem &child : children) {
+
+            if (child.objectType
+                != FileObjectType::AtomicFile) {
+                continue;
+            }
+
+            if (remoteFileNames.contains(child.name)) {
+                continue;
+            }
+
+            if (child.syncState == SyncState::LocalOnly
+                || child.syncState == SyncState::Uploading) {
+                continue;
+            }
+
+            store.removeFile(child.id);
         }
     }
 
-    /*
-     * 为每一个 Atomic Folder 构建上传队列。
-     */
-    for (const QString &folderPath :
-         std::as_const(
-             m_atomicFolderQueue)) {
+    // ---- 远端已删除的原子文件夹 ----
 
-        const QStringList files =
-            collectAtomicFolderFiles(
-                folderPath);
+    if (!mayPrune) {
+        return;
+    }
 
-        for (const QString &localFile :
-             files) {
+    for (const FileItem &item : roots) {
 
-            const QString remotePath =
-                remoteAtomicFolderPathForLocalPath(
-                    folderPath);
+        if (item.objectType
+            != FileObjectType::AtomicFolder) {
+            continue;
+        }
 
-            if (remotePath.isEmpty()) {
+        if (remoteNames.contains(item.name)) {
+            continue;
+        }
+
+        if (item.syncState == SyncState::LocalOnly
+            || item.syncState == SyncState::Uploading) {
+            continue;
+        }
+
+        const QVector<FileItem> children =
+            storeChildren(
+                item.id,
+                m_job.space,
+                m_job.sourceId,
+                m_job.groupId);
+
+        for (const FileItem &child : children) {
+
+            if (!child.localPath.isEmpty()) {
+
+                QFile::remove(child.localPath);
+            }
+
+            store.removeFile(child.id);
+        }
+
+        if (!item.localPath.isEmpty()) {
+
+            QDir(item.localPath).removeRecursively();
+        }
+
+        store.removeFile(item.id);
+    }
+}
+
+// ============================================================
+// 上传准备
+// ============================================================
+
+void SyncService::prepareUploads()
+{
+    m_job.directoryQueue.clear();
+    m_job.directoryIndex = 0;
+    m_job.uploadQueue.clear();
+    m_job.uploadIndex = 0;
+
+    if (m_job.readOnly) {
+        return;
+    }
+
+    // ---- 远端已有文件的索引 ----
+
+    QHash<QString, RemoteEntry> remoteFiles;
+
+    for (const RemoteFolder &folder : m_job.folders) {
+
+        for (const RemoteEntry &file : folder.files) {
+
+            remoteFiles.insert(
+                file.path,
+                file);
+        }
+    }
+
+    QSet<QString> remoteFolderNames;
+
+    for (const RemoteFolder &folder : m_job.folders) {
+        remoteFolderNames.insert(folder.name);
+    }
+
+    const QVector<FileItem> items =
+        allItemsOfJob();
+
+    for (const FileItem &item : items) {
+
+        if (item.objectType
+            != FileObjectType::AtomicFolder) {
+            continue;
+        }
+
+        const QString remoteFolder =
+            layout::remoteAtomicFolderPath(
+                m_job.remoteRoot,
+                item.name);
+
+        if (remoteFolder.isEmpty()) {
+            continue;
+        }
+
+        /*
+         * 本地目录来源：
+         *
+         *   1. 已经导入 / 已下载 -> localPath
+         *   2. 否则退回镜像候选路径
+         */
+        QString localDirectory =
+            item.localPath;
+
+        if (localDirectory.isEmpty()) {
+
+            localDirectory =
+                layout::localPathForRemote(
+                    remoteFolder,
+                    m_job.sourceId);
+        }
+
+        const QFileInfo localInfo(localDirectory);
+
+        if (!localInfo.exists()
+            || !localInfo.isDir()) {
+
+            continue;
+        }
+
+        QStringList localFiles;
+
+        const QFileInfoList entries =
+            QDir(localDirectory).entryInfoList(
+                QDir::Files
+                    | QDir::NoDotAndDotDot,
+                QDir::Name);
+
+        for (const QFileInfo &info : entries) {
+
+            if (isHiddenOrSystemEntry(
+                    info.fileName())) {
                 continue;
             }
+
+            localFiles.append(
+                info.absoluteFilePath());
+        }
+
+        if (localFiles.isEmpty()) {
+            continue;
+        }
+
+        if (!remoteFolderNames.contains(item.name)) {
+
+            if (!m_job.directoryQueue.contains(
+                    remoteFolder)) {
+
+                m_job.directoryQueue.append(
+                    remoteFolder);
+            }
+        }
+
+        for (const QString &localFile : localFiles) {
 
             const QString fileName =
                 QFileInfo(localFile).fileName();
 
             const QString remoteFile =
-                normalizeRemotePath(
-                    remotePath
-                    + QLatin1Char('/')
-                    + fileName);
+                layout::remoteAtomicFilePath(
+                    m_job.remoteRoot,
+                    item.name,
+                    fileName);
 
-            if (!m_remoteNames.contains(
-                    remoteFile)) {
-
-                m_uploadQueue.append(
-                    qMakePair(
-                        localFile,
-                        remoteFile));
+            if (remoteFile.isEmpty()) {
+                continue;
             }
+
+            // ---- 远端已有且更新 -> 不上传 ----
+
+            const auto remoteIt =
+                remoteFiles.constFind(remoteFile);
+
+            if (remoteIt != remoteFiles.constEnd()) {
+
+                const QDateTime remoteModified =
+                    remoteIt->modified;
+
+                const QDateTime localModified =
+                    QFileInfo(localFile).lastModified();
+
+                if (remoteModified.isValid()
+                    && localModified.isValid()
+                    && localModified <= remoteModified) {
+
+                    continue;
+                }
+            }
+
+            m_job.uploadQueue.append(
+                qMakePair(
+                    localFile,
+                    remoteFile));
         }
     }
 
     qDebug()
-        << "Atomic Folder:"
-        << m_atomicFolderQueue.size();
-
-    qDebug()
-        << "Upload queue:"
-        << m_uploadQueue.size();
+        << "SyncService: 待创建目录"
+        << m_job.directoryQueue.size()
+        << "待上传文件"
+        << m_job.uploadQueue.size();
 }
 
-
 // ============================================================
-// Add Atomic Folder directories
-// ============================================================
-
-void SyncService::addAtomicFolderDirectories(
-    const FileItem &atomicFolder)
-{
-    if (!isAtomicFolder(
-            atomicFolder)) {
-        return;
-    }
-
-    const QString remoteFolder =
-        remoteAtomicFolderPathForItem(
-            atomicFolder);
-
-    if (remoteFolder.isEmpty()) {
-        return;
-    }
-
-    addParentDirectories(
-        remoteFolder);
-
-    if (!m_directoryQueue.contains(
-            remoteFolder)) {
-
-        m_directoryQueue.append(
-            remoteFolder);
-    }
-
-    /*
-     * Atomic Folder 内可能还有：
-     *
-     * annotations/
-     * assets/
-     * ...
-     *
-     * 根据本地文件路径创建对应父目录。
-     */
-    const QStringList localFiles =
-        atomicFolderFiles(
-            atomicFolder);
-
-    for (const QString &localFile :
-         localFiles) {
-
-        const QFileInfo info(localFile);
-
-        const QString relative =
-            QDir(
-                QFileInfo(
-                    localFile).absolutePath())
-                .relativeFilePath(
-                    localFile);
-
-        Q_UNUSED(relative);
-
-        /*
-         * 当前 Atomic File 通常直接位于
-         * Atomic Folder 下。
-         *
-         * 如果未来允许附属文件夹，
-         * 这里根据本地 relative path
-         * 创建对应远程目录。
-         */
-        Q_UNUSED(info);
-    }
-}
-
-
-// ============================================================
-// Directory queue
-// ============================================================
-
-void SyncService::addParentDirectories(
-    const QString &remotePath)
-{
-    QString parent =
-        remoteParentPath(
-            remotePath);
-
-    QStringList parents;
-
-    while (!parent.isEmpty()
-           && parent != QStringLiteral("/")) {
-
-        parents.prepend(parent);
-
-        const QString next =
-            remoteParentPath(parent);
-
-        if (next == parent) {
-            break;
-        }
-
-        parent = next;
-    }
-
-    /*
-     * 不重复创建。
-     */
-    for (const QString &dir : parents) {
-
-        const QString normalized =
-            normalizeRemotePath(dir);
-
-        /*
-         * 当前同步根本身不需要重新创建。
-         */
-        const QString root =
-            normalizeRemotePath(
-                remoteSpaceRoot(
-                    m_activeSpace));
-
-        if (normalized == root) {
-            continue;
-        }
-
-        if (!m_directoryQueue.contains(
-                normalized)) {
-
-            m_directoryQueue.append(
-                normalized);
-        }
-    }
-}
-
-
-// ============================================================
-// Start directory creation
+// 目录创建
 // ============================================================
 
 void SyncService::startDirectoryCreation()
 {
-    m_directoryQueueIndex = 0;
+    m_job.directoryIndex = 0;
 
-    if (m_directoryQueue.isEmpty()) {
+    if (m_job.directoryQueue.isEmpty()) {
 
         startUploads();
 
         return;
     }
 
-    /*
-     * 保证父目录在子目录之前。
-     */
-    std::sort(
-        m_directoryQueue.begin(),
-        m_directoryQueue.end(),
-        [](const QString &a,
-           const QString &b) {
-
-            return a.count(
-                       QLatin1Char('/'))
-                   <
-                   b.count(
-                       QLatin1Char('/'));
-        });
-
-    createNextRemoteDirectory();
+    createNextDirectory();
 }
 
-void SyncService::createNextRemoteDirectory()
+void SyncService::createNextDirectory()
 {
-    if (!m_syncInProgress) {
+    if (!m_job.active) {
         return;
     }
 
-    if (m_directoryQueueIndex
-        >= m_directoryQueue.size()) {
+    if (m_job.directoryIndex
+        >= m_job.directoryQueue.size()) {
+
+        // 补建根目录之后重新扫描一次。
+        if (m_job.bootstrappingRoot) {
+
+            m_job.bootstrappingRoot = false;
+            m_job.directoryQueue.clear();
+            m_job.directoryIndex = 0;
+
+            beginRemoteScan();
+
+            return;
+        }
 
         startUploads();
 
@@ -1350,121 +1636,84 @@ void SyncService::createNextRemoteDirectory()
     }
 
     const QString path =
-        normalizeRemotePath(
-            m_directoryQueue.at(
-                m_directoryQueueIndex));
+        m_job.directoryQueue.at(
+            m_job.directoryIndex);
 
-    ++m_directoryQueueIndex;
+    ++m_job.directoryIndex;
 
-    /*
-     * 如果远程扫描已经发现这个目录，
-     * 就不需要重新 MKCOL。
-     */
-    bool exists = false;
-
-    for (const QVariant &value :
-         std::as_const(
-             m_remoteEntries)) {
-
-        const QVariantMap map =
-            value.toMap();
-
-        QString remotePath =
-            map.value(
-                   QStringLiteral("path"))
-                .toString();
-
-        remotePath =
-            normalizeRemotePath(
-                remotePath);
-
-        if (remotePath == path) {
-            exists = true;
-            break;
-        }
-    }
-
-    if (exists) {
-
-        createNextRemoteDirectory();
-
-        return;
-    }
-
-    qDebug()
-        << "创建远程目录:"
-        << path;
-
-    m_client->createDirectory(path);
+    m_job.client->createDirectory(path);
 }
 
-
-// ============================================================
-// Directory created
-// ============================================================
-
-void SyncService::handleDirectoryCreated(
+void SyncService::onDirectoryCreated(
     const QString &remotePath,
     bool ok,
     const QString &error)
 {
-    if (!m_syncInProgress) {
+    // ---- 远端骨架创建 ----
+
+    if (m_layoutCreationInProgress) {
+
+        if (!ok) {
+
+            qWarning()
+                << "SyncService: 创建远端骨架失败"
+                << remotePath
+                << error;
+        }
+
+        ++m_layoutIndex;
+
+        ensureRemoteLayout();
+
+        return;
+    }
+
+    // ---- 普通同步 ----
+
+    if (!isJobClient()) {
         return;
     }
 
     if (!ok) {
 
-        /*
-         * 目录已经存在时，WebDAV 服务端可能返回
-         * 4xx。
-         *
-         * 由于同步前已经扫描过远程目录，
-         * 这里将错误记录下来，但继续处理。
-         */
         qWarning()
-            << "创建远程目录失败:"
+            << "SyncService: 创建目录失败"
             << remotePath
             << error;
 
-        m_hasError = true;
+        /*
+         * 补建根目录时的失败先不判死，
+         * 重扫之后仍然读不到才会上报。
+         */
+        if (!m_job.bootstrappingRoot) {
 
-        if (m_syncError.isEmpty()) {
-            m_syncError =
-                QStringLiteral(
-                    "创建远程目录失败：%1")
-                    .arg(error);
+            m_job.hasError = true;
+
+            if (m_job.error.isEmpty()) {
+                m_job.error = error;
+            }
         }
-
-    } else {
-
-        qDebug()
-        << "远程目录创建成功:"
-        << remotePath;
     }
 
-    createNextRemoteDirectory();
+    createNextDirectory();
 }
 
-
 // ============================================================
-// Upload
+// 上传
 // ============================================================
 
 void SyncService::startUploads()
 {
-    m_uploadQueueIndex = 0;
+    m_job.uploadIndex = 0;
 
-    if (m_uploadQueue.isEmpty()) {
+    if (m_job.uploadQueue.isEmpty()) {
 
-        /*
-         * 当前没有本地文件需要上传。
-         */
-        finish(
-            !m_hasError,
-            m_hasError
-                ? m_syncError
-                : QStringLiteral(
-                      "同步完成"));
+        finishJob(
+            !m_job.hasError,
+            m_job.hasError
+                ? m_job.error
+                : QStringLiteral("%1 同步完成")
+                      .arg(jobLabel()));
 
         return;
     }
@@ -1474,845 +1723,777 @@ void SyncService::startUploads()
 
 void SyncService::uploadNextFile()
 {
-    if (!m_syncInProgress) {
+    if (!m_job.active) {
         return;
     }
 
-    if (m_uploadQueueIndex
-        >= m_uploadQueue.size()) {
+    if (m_job.uploadIndex
+        >= m_job.uploadQueue.size()) {
 
-        finish(
-            !m_hasError,
-            m_hasError
-                ? m_syncError
-                : QStringLiteral(
-                      "同步完成"));
+        finishJob(
+            !m_job.hasError,
+            m_job.hasError
+                ? m_job.error
+                : QStringLiteral("%1 同步完成")
+                      .arg(jobLabel()));
 
         return;
     }
 
     const QPair<QString, QString> pair =
-        m_uploadQueue.at(
-            m_uploadQueueIndex);
+        m_job.uploadQueue.at(
+            m_job.uploadIndex);
 
-    const QString localPath =
-        pair.first;
+    ++m_job.uploadIndex;
 
-    const QString remotePath =
-        pair.second;
-
-    ++m_uploadQueueIndex;
-
-    if (!QFileInfo::exists(localPath)) {
+    if (!QFileInfo::exists(pair.first)) {
 
         qWarning()
-        << "本地文件不存在:"
-        << localPath;
-
-        m_hasError = true;
-
-        if (m_syncError.isEmpty()) {
-            m_syncError =
-                QStringLiteral(
-                    "本地文件不存在：%1")
-                    .arg(localPath);
-        }
+            << "SyncService: 本地文件已消失"
+            << pair.first;
 
         uploadNextFile();
 
         return;
     }
 
-    ++m_pendingOps;
-
-    qDebug()
-        << "上传:"
-        << localPath
-        << "->"
-        << remotePath;
-
-    m_client->uploadFile(
-        localPath,
-        remotePath);
+    m_job.client->uploadFile(
+        pair.first,
+        pair.second);
 }
 
-
-// ============================================================
-// Upload finished
-// ============================================================
-
-void SyncService::handleUploadFinished(
+void SyncService::onUploadFinished(
     const QString &remotePath,
     bool ok,
     const QString &error)
 {
-    if (!m_syncInProgress) {
+    if (!isJobClient()) {
         return;
-    }
-
-    if (m_pendingOps > 0) {
-        --m_pendingOps;
     }
 
     if (!ok) {
 
-        m_hasError = true;
-
-        if (m_syncError.isEmpty()) {
-            m_syncError =
-                QStringLiteral(
-                    "上传失败：%1")
-                    .arg(error);
-        }
-
         qWarning()
-            << "上传失败:"
+            << "SyncService: 上传失败"
             << remotePath
             << error;
 
-    } else {
+        m_job.hasError = true;
 
-        qDebug()
-        << "上传完成:"
-        << remotePath;
+        if (m_job.error.isEmpty()) {
+            m_job.error = error;
+        }
     }
 
     uploadNextFile();
 }
 
-
 // ============================================================
-// Download finished
+// 结束任务
 // ============================================================
 
-void SyncService::handleDownloadFinished(
-    const QString &remotePath,
-    const QString &localPath,
+void SyncService::finishJob(
     bool ok,
-    const QString &error)
+    const QString &message)
 {
-    if (!m_syncInProgress) {
+    if (!m_job.active) {
         return;
     }
 
-    if (m_pendingOps > 0) {
-        --m_pendingOps;
-    }
+    const QString label = jobLabel();
 
-    if (!ok) {
+    const FileSpace space = m_job.space;
+    const QString sourceId = m_job.sourceId;
+    const QString groupId = m_job.groupId;
 
-        m_hasError = true;
+    m_job.active = false;
+    m_job.client = nullptr;
 
-        if (m_syncError.isEmpty()) {
-            m_syncError =
-                QStringLiteral(
-                    "下载失败：%1")
-                    .arg(error);
-        }
+    m_job.folders.clear();
+    m_job.folderIndexByPath.clear();
+    m_job.visited.clear();
+    m_job.pendingListings = 0;
+    m_job.directoryQueue.clear();
+    m_job.uploadQueue.clear();
 
-        qWarning()
-            << "下载失败:"
-            << remotePath
-            << error;
+    qDebug()
+        << "SyncService: 同步结束" << label
+        << (ok ? "success" : "failed")
+        << message;
 
-    } else {
+    emit syncFinished(ok, message);
+    emit libraryChanged();
 
-        qDebug()
-        << "下载完成:"
-        << remotePath
-        << "->"
-        << localPath;
-    }
+    // ---- 继续队列中的下一个空间 ----
+
+    startNextQueuedJob();
 }
 
-
 // ============================================================
-// Process remote Atomic Folder
+// 自动同步
 // ============================================================
 
-void SyncService::processRemoteAtomicFolder(
-    const QString &remotePath,
-    const QVariantMap &entry)
+void SyncService::startAutoSync(int intervalMs)
 {
-    Q_UNUSED(entry);
+    if (intervalMs <= 0) {
+        intervalMs = 180000;
+    }
 
-    const QString normalized =
-        normalizeRemotePath(
-            remotePath);
+    m_timer->setInterval(intervalMs);
+    m_timer->start();
+}
 
-    if (!isRemotePathInCurrentSpace(
-            normalized)) {
+void SyncService::stopAutoSync()
+{
+    m_timer->stop();
+}
+
+void SyncService::onAutoSyncTimeout()
+{
+    if (m_job.active || m_deleting) {
         return;
     }
 
-    /*
-     * 远程 Atomic Folder 本身是目录。
-     *
-     * 这里不创建 App folder hierarchy。
-     *
-     * 后续可以通过 metadata / UUID
-     * 建立 Atomic Folder 对象。
-     */
+    syncMyAccount();
 }
 
-
 // ============================================================
-// Remote path mapping
+// 远端骨架
 // ============================================================
 
-QString SyncService::normalizeRemotePath(
-    const QString &path) const
+void SyncService::ensureRemoteLayout()
 {
-    if (path.isEmpty()) {
-        return QStringLiteral("/");
+    if (!m_ownClient) {
+        return;
     }
 
-    QString result =
-        path.trimmed();
+    if (m_layoutQueue.isEmpty()) {
 
-    /*
-     * 允许 WebDavClient 返回完整 URL。
-     */
-    if (result.startsWith(
-            QStringLiteral("http://"),
-            Qt::CaseInsensitive)
-        ||
-        result.startsWith(
-            QStringLiteral("https://"),
-            Qt::CaseInsensitive)) {
+        m_layoutIndex = 0;
 
-        const QUrl url(result);
+        /*
+         * 只创建顶层共享根。
+         *
+         * 群组目录的层级取决于远端实际布局
+         * （zesbks/group/group me 或 zesbks/group me），
+         * 交给每个同步任务的「根目录补建」按需创建。
+         */
+        m_layoutQueue
+            << layout::remoteShareRoot();
 
-        if (url.isValid()) {
-            result = url.path();
+        m_layoutCreationInProgress = true;
+    }
+
+    if (m_layoutIndex >= m_layoutQueue.size()) {
+
+        m_layoutCreationInProgress = false;
+        m_layoutQueue.clear();
+        m_layoutIndex = 0;
+
+        emit statusMessage(
+            QStringLiteral("远端目录已就绪"));
+
+        emit remoteLayoutReady();
+
+        /*
+         * 验证并建好骨架之后，
+         * 立刻做一次首次同步，
+         * 把远端已有的原子对象拉进应用。
+         */
+        if (!m_job.active && !m_deleting) {
+            syncMyAccount();
         }
+
+        return;
     }
 
-    /*
-     * URL decode。
-     */
-    result =
-        QUrl::fromPercentEncoding(
-            result.toUtf8());
+    m_ownClient->createDirectory(
+        m_layoutQueue.at(m_layoutIndex));
+}
 
-    result.replace(
-        QLatin1Char('\\'),
-        QLatin1Char('/'));
+// ============================================================
+// 他人群组数据源
+// ============================================================
 
-    if (!result.startsWith(
-            QLatin1Char('/'))) {
+QVariantList SyncService::groupSources() const
+{
+    QVariantList result;
 
-        result.prepend(
-            QLatin1Char('/'));
+    MetadataStore store;
+
+    if (!openStore(store)) {
+        return result;
     }
 
-    while (result.contains(
-        QStringLiteral("//"))) {
+    const QVector<GroupSource> all =
+        store.sources();
 
-        result.replace(
-            QStringLiteral("//"),
-            QStringLiteral("/"));
-    }
+    for (const GroupSource &source : all) {
 
-    if (result.length() > 1
-        && result.endsWith(
-            QLatin1Char('/'))) {
+        QVariantMap map;
 
-        result.chop(1);
+        map.insert(
+            QStringLiteral("sourceId"),
+            source.sourceId);
+
+        map.insert(
+            QStringLiteral("displayName"),
+            source.displayName.isEmpty()
+                ? source.sourceId
+                : source.displayName);
+
+        map.insert(
+            QStringLiteral("serverUrl"),
+            source.serverUrl);
+
+        map.insert(
+            QStringLiteral("username"),
+            source.username);
+
+        map.insert(
+            QStringLiteral("password"),
+            source.password);
+
+        map.insert(
+            QStringLiteral("remoteRoot"),
+            source.remoteRoot.isEmpty()
+                ? layout::remoteGroupMeRoot(0)
+                : source.remoteRoot);
+
+        map.insert(
+            QStringLiteral("lastSync"),
+            source.lastSync);
+
+        result.append(map);
     }
 
     return result;
 }
 
-
-// ============================================================
-// Remote parent
-// ============================================================
-
-QString SyncService::remoteParentPath(
-    const QString &remotePath) const
+bool SyncService::saveGroupSource(
+    const QString &sourceId,
+    const QString &displayName,
+    const QString &serverUrl,
+    const QString &username,
+    const QString &password,
+    const QString &remoteRoot)
 {
-    const QString normalized =
-        normalizeRemotePath(
-            remotePath);
+    const QString id = sourceId.trimmed();
 
-    if (normalized == QStringLiteral("/")) {
-        return QStringLiteral("/");
-    }
-
-    const int slash =
-        normalized.lastIndexOf(
-            QLatin1Char('/'));
-
-    if (slash <= 0) {
-        return QStringLiteral("/");
-    }
-
-    return normalized.left(slash);
-}
-
-
-// ============================================================
-// Check remote path
-// ============================================================
-
-bool SyncService::isRemotePathInCurrentSpace(
-    const QString &remotePath) const
-{
-    const QString root =
-        normalizeRemotePath(
-            remoteSpaceRoot(
-                m_activeSpace));
-
-    const QString path =
-        normalizeRemotePath(
-            remotePath);
-
-    if (path == root) {
+    if (id.isEmpty() || serverUrl.trimmed().isEmpty()) {
         return false;
     }
 
-    return path.startsWith(
-        root + QLatin1Char('/'));
+    MetadataStore store;
+
+    if (!openStore(store)) {
+        return false;
+    }
+
+    GroupSource source;
+
+    // 保留已有配置中未修改的字段。
+    const GroupSource existing =
+        store.sourceById(id);
+
+    source.sourceId = id;
+
+    source.displayName =
+        displayName.trimmed().isEmpty()
+            ? id
+            : displayName.trimmed();
+
+    source.serverUrl = serverUrl.trimmed();
+
+    source.username =
+        username.trimmed().isEmpty()
+            ? existing.username
+            : username.trimmed();
+
+    source.password =
+        password.isEmpty()
+            ? existing.password
+            : password;
+
+    source.remoteRoot =
+        layout::normalizeRemotePath(
+            remoteRoot.trimmed().isEmpty()
+                ? layout::remoteGroupMeRoot(0)
+                : remoteRoot.trimmed());
+
+    source.readOnly = true;
+    source.lastSync = existing.lastSync;
+
+    if (!store.upsertSource(source)) {
+        return false;
+    }
+
+    // 凭据可能已变化，丢弃缓存客户端。
+    if (m_sourceClients.contains(id)) {
+
+        WebDavClient *cached =
+            m_sourceClients.take(id);
+
+        cached->deleteLater();
+    }
+
+    return true;
 }
 
+bool SyncService::removeGroupSource(
+    const QString &sourceId)
+{
+    MetadataStore store;
+
+    if (!openStore(store)) {
+        return false;
+    }
+
+    if (m_sourceClients.contains(sourceId)) {
+
+        WebDavClient *cached =
+            m_sourceClients.take(sourceId);
+
+        cached->deleteLater();
+    }
+
+    return store.removeSource(sourceId);
+}
 
 // ============================================================
-// Finish
+// 按需下载
 // ============================================================
 
-void SyncService::finish(
+bool SyncService::downloadItem(
+    const QString &fileId)
+{
+    MetadataStore store;
+
+    if (!openStore(store)) {
+        return false;
+    }
+
+    const FileItem item =
+        store.fileById(fileId);
+
+    if (!item.isValid()
+        || item.objectType != FileObjectType::AtomicFile) {
+
+        return false;
+    }
+
+    if (item.remotePath.isEmpty()) {
+        return false;
+    }
+
+    // 已经在本地。
+    if (!item.localPath.isEmpty()
+        && QFileInfo::exists(item.localPath)) {
+
+        emit itemDownloaded(
+            fileId,
+            item.remotePath,
+            item.localPath,
+            true,
+            QString());
+
+        return true;
+    }
+
+    WebDavClient *client =
+        clientForSource(item.sourceId);
+
+    if (!client) {
+        return false;
+    }
+
+    const QString localPath =
+        layout::localPathForRemote(
+            item.remotePath,
+            item.sourceId);
+
+    if (!QDir().mkpath(
+            QFileInfo(localPath).absolutePath())) {
+
+        return false;
+    }
+
+    m_pendingDownloadIds.insert(
+        item.remotePath,
+        fileId);
+
+    client->downloadFile(
+        item.remotePath,
+        localPath);
+
+    return true;
+}
+
+void SyncService::onDownloadFinished(
+    const QString &remotePath,
+    const QString &localPath,
     bool ok,
-    const QString &message)
+    const QString &error)
 {
-    if (!m_syncInProgress) {
+    const QString fileId =
+        m_pendingDownloadIds.take(remotePath);
+
+    if (fileId.isEmpty()) {
+
+        /*
+         * 不是本服务发起的下载，
+         * 例如 UI 直接调用 WebDavClient。
+         */
         return;
     }
 
-    m_syncInProgress = false;
+    if (ok) {
 
-    m_pendingOps = 0;
-    m_pendingDirectoryListings = 0;
+        MetadataStore store;
 
-    qDebug()
-        << "========================================";
+        if (openStore(store)) {
 
-    qDebug()
-        << "WebDAV 同步结束";
+            store.updateLocalPath(
+                fileId,
+                localPath);
 
-    qDebug()
-        << "space ="
-        << static_cast<int>(
-               m_activeSpace);
+            store.touchSourceSyncTime(
+                QString());
+        }
+    }
 
-    qDebug()
-        << "sourceId ="
-        << m_activeSourceId;
-
-    qDebug()
-        << "result ="
-        << (ok ? "success" : "failed");
-
-    qDebug()
-        << "message ="
-        << message;
-
-    qDebug()
-        << "========================================";
-
-    emit syncFinished(
+    emit itemDownloaded(
+        fileId,
+        remotePath,
+        localPath,
         ok,
-        message);
+        error);
+
+    if (ok) {
+        emit libraryChanged();
+    }
 }
 
-
 // ============================================================
-// Operation tracking
+// 回推单个条目
 // ============================================================
 
-void SyncService::trackOperation()
+bool SyncService::uploadItem(
+    const QString &fileId)
 {
-    if (m_pendingOps > 0) {
-        --m_pendingOps;
+    MetadataStore store;
+
+    if (!openStore(store)) {
+        return false;
     }
+
+    const FileItem item =
+        store.fileById(fileId);
+
+    if (!item.isValid() || item.isReadOnly()) {
+        return false;
+    }
+
+    if (item.remotePath.isEmpty()) {
+        return false;
+    }
+
+    if (item.localPath.isEmpty()
+        || !QFileInfo::exists(item.localPath)) {
+
+        return false;
+    }
+
+    WebDavClient *client =
+        clientForSource(item.sourceId);
+
+    if (!client) {
+        return false;
+    }
+
+    client->uploadFile(
+        item.localPath,
+        item.remotePath);
+
+    return true;
 }
 
-
 // ============================================================
-// Remote deletion
-// ============================================================
-
-void SyncService::enqueueRemoteAtomicFolderDeletion(
-    const QString &remoteAtomicFolderPath)
-{
-    const QString normalized =
-        normalizeRemotePath(
-            remoteAtomicFolderPath);
-
-    const QString root =
-        normalizeRemotePath(
-            remoteSpaceRoot(
-                m_activeSpace));
-
-    /*
-     * 绝对禁止删除：
-     *
-     *     /
-     *
-     *     /zesbks
-     *
-     *     /zesbks/group
-     *
-     * 即当前同步空间根目录。
-     */
-    if (normalized == QStringLiteral("/")
-        || normalized == root) {
-
-        m_remoteDeletionHasError = true;
-
-        if (m_remoteDeletionError.isEmpty()) {
-            m_remoteDeletionError =
-                QStringLiteral(
-                    "不能删除同步空间根目录");
-        }
-
-        qWarning()
-            << "拒绝删除同步根目录:"
-            << normalized;
-
-        return;
-    }
-
-    /*
-     * 必须属于当前同步 root。
-     */
-    if (!normalized.startsWith(
-            root + QLatin1Char('/'))) {
-
-        m_remoteDeletionHasError = true;
-
-        if (m_remoteDeletionError.isEmpty()) {
-            m_remoteDeletionError =
-                QStringLiteral(
-                    "删除路径不属于当前同步空间");
-        }
-
-        qWarning()
-            << "拒绝删除当前空间之外的路径:"
-            << normalized;
-
-        return;
-    }
-
-    /*
-     * Atomic Folder 必须是 root 的直接子目录。
-     *
-     * 对：
-     *
-     *     /zesbks/
-     *
-     * 合法：
-     *
-     *     /zesbks/A
-     *
-     * 对：
-     *
-     *     /zesbks/group/
-     *
-     * 合法：
-     *
-     *     /zesbks/group/A
-     */
-    const QString relative =
-        normalized.mid(
-            root.length() + 1);
-
-    if (relative.isEmpty()
-        || relative.contains(
-            QLatin1Char('/'))) {
-
-        m_remoteDeletionHasError = true;
-
-        if (m_remoteDeletionError.isEmpty()) {
-            m_remoteDeletionError =
-                QStringLiteral(
-                    "删除目标不是当前空间的 Atomic Folder");
-        }
-
-        qWarning()
-            << "拒绝删除非 Atomic Folder:"
-            << normalized;
-
-        return;
-    }
-
-    if (!m_remoteDeleteQueue.contains(
-            normalized)) {
-
-        m_remoteDeleteQueue.append(
-            normalized);
-    }
-}
-
-
-// ============================================================
-// Delete one
+// 远端删除
 // ============================================================
 
 void SyncService::deleteRemoteAtomicFolder(
-    const QString &remoteAtomicFolderPath,
-    const QString &sourceId)
+    const QString &fileId)
 {
-    if (m_syncInProgress) {
+    if (m_job.active || m_deleting) {
+
+        emit remoteDeletionFinished(
+            false,
+            QStringLiteral("当前有同步任务在进行"));
+
+        return;
+    }
+
+    MetadataStore store;
+
+    if (!openStore(store)) {
+
+        emit remoteDeletionFinished(
+            false,
+            QStringLiteral("无法打开本地数据库"));
+
+        return;
+    }
+
+    const FileItem item =
+        store.fileById(fileId);
+
+    if (!item.isValid()
+        || item.objectType != FileObjectType::AtomicFolder) {
+
+        emit remoteDeletionFinished(
+            false,
+            QStringLiteral("只能删除原子文件夹"));
+
+        return;
+    }
+
+    if (item.isReadOnly()) {
 
         emit remoteDeletionFinished(
             false,
             QStringLiteral(
-                "当前正在同步，请稍后再删除"));
+                "group us 的内容来自他人账号，不可删除"));
 
         return;
     }
 
-    if (m_remoteDeletionInProgress) {
+    if (item.remotePath.isEmpty()) {
 
         emit remoteDeletionFinished(
             false,
-            QStringLiteral(
-                "已有远程删除任务正在执行"));
-
-        return;
-    }
-
-    if (!m_client) {
-
-        emit remoteDeletionFinished(
-            false,
-            QStringLiteral(
-                "WebDAV 客户端不可用"));
-
-        return;
-    }
-
-    if (!sourceId.isEmpty()) {
-        m_activeSourceId = sourceId;
-    }
-
-    m_remoteDeleteQueue.clear();
-    m_remoteDeleteQueueIndex = 0;
-
-    m_remoteDeletionHasError = false;
-    m_remoteDeletionError.clear();
-
-    enqueueRemoteAtomicFolderDeletion(
-        remoteAtomicFolderPath);
-
-    if (m_remoteDeleteQueue.isEmpty()) {
-
-        emit remoteDeletionFinished(
-            false,
-            m_remoteDeletionError.isEmpty()
-                ? QStringLiteral(
-                      "没有有效的删除目标")
-                : m_remoteDeletionError);
-
-        return;
-    }
-
-    startRemoteDeletion();
-}
-
-
-// ============================================================
-// Delete multiple
-// ============================================================
-
-void SyncService::deleteRemoteAtomicFolders(
-    const QStringList &remoteAtomicFolderPaths,
-    const QString &sourceId)
-{
-    if (m_syncInProgress) {
-
-        emit remoteDeletionFinished(
-            false,
-            QStringLiteral(
-                "当前正在同步，请稍后再删除"));
-
-        return;
-    }
-
-    if (m_remoteDeletionInProgress) {
-
-        emit remoteDeletionFinished(
-            false,
-            QStringLiteral(
-                "已有远程删除任务正在执行"));
-
-        return;
-    }
-
-    if (!m_client) {
-
-        emit remoteDeletionFinished(
-            false,
-            QStringLiteral(
-                "WebDAV 客户端不可用"));
-
-        return;
-    }
-
-    if (!sourceId.isEmpty()) {
-        m_activeSourceId = sourceId;
-    }
-
-    m_remoteDeleteQueue.clear();
-    m_remoteDeleteQueueIndex = 0;
-
-    m_remoteDeletionHasError = false;
-    m_remoteDeletionError.clear();
-
-    for (const QString &path :
-         remoteAtomicFolderPaths) {
-
-        enqueueRemoteAtomicFolderDeletion(
-            path);
-    }
-
-    if (m_remoteDeleteQueue.isEmpty()) {
-
-        emit remoteDeletionFinished(
-            false,
-            m_remoteDeletionError.isEmpty()
-                ? QStringLiteral(
-                      "没有有效的删除目标")
-                : m_remoteDeletionError);
-
-        return;
-    }
-
-    startRemoteDeletion();
-}
-
-
-// ============================================================
-// Start remote deletion
-// ============================================================
-
-void SyncService::startRemoteDeletion()
-{
-    if (m_remoteDeletionInProgress) {
-        return;
-    }
-
-    if (!m_client) {
-
-        m_remoteDeletionHasError = true;
-
-        m_remoteDeletionError =
-            QStringLiteral(
-                "WebDAV 客户端不可用");
-
-        emit remoteDeletionFinished(
-            false,
-            m_remoteDeletionError);
-
-        return;
-    }
-
-    m_remoteDeleteQueueIndex = 0;
-
-    m_remoteDeletionInProgress = true;
-
-    qDebug()
-        << "========================================";
-
-    qDebug()
-        << "开始删除 WebDAV Atomic Folder";
-
-    qDebug()
-        << "count ="
-        << m_remoteDeleteQueue.size();
-
-    qDebug()
-        << "root ="
-        << remoteSpaceRoot(
-               m_activeSpace);
-
-    qDebug()
-        << "========================================";
-
-    deleteNextRemoteAtomicFolder();
-}
-
-
-// ============================================================
-// Delete next
-// ============================================================
-
-void SyncService::deleteNextRemoteAtomicFolder()
-{
-    if (!m_remoteDeletionInProgress) {
-        return;
-    }
-
-    if (m_remoteDeleteQueueIndex
-        >= m_remoteDeleteQueue.size()) {
-
-        const bool ok =
-            !m_remoteDeletionHasError;
-
-        const QString message =
-            ok
-                ? QStringLiteral(
-                      "WebDAV Atomic Folder 删除完成")
-                : (m_remoteDeletionError.isEmpty()
-                       ? QStringLiteral(
-                             "部分 Atomic Folder 删除失败")
-                       : m_remoteDeletionError);
-
-        m_remoteDeletionInProgress = false;
-
-        emit remoteDeletionFinished(
-            ok,
-            message);
-
-        m_remoteDeleteQueue.clear();
-        m_remoteDeleteQueueIndex = 0;
+            QStringLiteral("该对象没有远端路径"));
 
         return;
     }
 
     const QString remotePath =
-        normalizeRemotePath(
-            m_remoteDeleteQueue.at(
-                m_remoteDeleteQueueIndex));
+        layout::normalizeRemotePath(
+            item.remotePath);
 
-    const QString root =
-        normalizeRemotePath(
-            remoteSpaceRoot(
-                m_activeSpace));
+    QString root;
 
-    /*
-     * 最后一道安全检查。
-     */
-    if (remotePath == QStringLiteral("/")
-        || remotePath == root
-        || !remotePath.startsWith(
-            root + QLatin1Char('/'))) {
+    switch (item.space) {
 
-        m_remoteDeletionHasError = true;
+    case FileSpace::MyDoc:
+        root = layout::remoteShareRoot();
+        break;
 
-        if (m_remoteDeletionError.isEmpty()) {
-            m_remoteDeletionError =
-                QStringLiteral(
-                    "检测到非法删除路径：%1")
-                    .arg(remotePath);
-        }
+    case FileSpace::GroupMe:
+        root = groupRootFor(
+            item.groupId.isEmpty()
+                ? layout::groupMeDirectoryName(0)
+                : item.groupId);
+        break;
 
-        ++m_remoteDeleteQueueIndex;
-
-        deleteNextRemoteAtomicFolder();
+    case FileSpace::GroupUs:
+        emit remoteDeletionFinished(
+            false,
+            QStringLiteral(
+                "group us 的内容不可删除"));
 
         return;
     }
 
-    /*
-     * Atomic Folder 必须直接位于
-     * 当前空间 root 下。
-     *
-     * MyDoc:
-     *
-     *     /zesbks/A
-     *
-     * Group:
-     *
-     *     /zesbks/group/A
-     */
+    root = layout::normalizeRemotePath(root);
+
     const QString relative =
-        remotePath.mid(
-            root.length() + 1);
+        remotePath.mid(root.length());
 
     if (relative.isEmpty()
-        || relative.contains(
-            QLatin1Char('/'))) {
+        || relative.count(QLatin1Char('/')) != 1) {
 
-        m_remoteDeletionHasError = true;
-
-        if (m_remoteDeletionError.isEmpty()) {
-            m_remoteDeletionError =
-                QStringLiteral(
-                    "检测到非法 Atomic Folder 路径：%1")
-                    .arg(remotePath);
-        }
-
-        ++m_remoteDeleteQueueIndex;
-
-        deleteNextRemoteAtomicFolder();
+        emit remoteDeletionFinished(
+            false,
+            QStringLiteral(
+                "只允许删除同步根下的一级原子文件夹：%1")
+                .arg(remotePath));
 
         return;
     }
 
-    qDebug()
-        << "删除远程 Atomic Folder:"
-        << remotePath;
+    m_deleteQueue.clear();
+    m_deleteQueue << remotePath;
 
-    /*
-     * WebDavClient::removeFile()
-     *
-     * 对目录执行 HTTP DELETE。
-     *
-     * WebDAV server 会删除该 collection
-     * 及其内部内容。
-     */
-    m_client->removeFile(
-        remotePath);
+    m_deleteFolderIds.clear();
+    m_deleteFolderIds.insert(remotePath, item.id);
+
+    m_deleteIndex = 0;
+    m_deleteHasError = false;
+    m_deleteError.clear();
+    m_deleting = true;
+
+    deleteNextRemoteFolder();
 }
 
+void SyncService::deleteNextRemoteFolder()
+{
+    if (!m_deleting) {
+        return;
+    }
 
-// ============================================================
-// Remove finished
-// ============================================================
+    if (m_deleteIndex >= m_deleteQueue.size()) {
 
-void SyncService::handleRemoveFinished(
+        m_deleting = false;
+
+        const bool ok = !m_deleteHasError;
+
+        emit remoteDeletionFinished(
+            ok,
+            ok
+                ? QStringLiteral("远端原子文件夹已删除")
+                : (m_deleteError.isEmpty()
+                       ? QStringLiteral("远端删除失败")
+                       : m_deleteError));
+
+        if (ok) {
+            emit libraryChanged();
+        }
+
+        m_deleteQueue.clear();
+        m_deleteIndex = 0;
+
+        return;
+    }
+
+    const QString path =
+        m_deleteQueue.at(m_deleteIndex);
+
+    if (!m_ownClient) {
+
+        m_deleteHasError = true;
+        m_deleteError = QStringLiteral("WebDAV 客户端不可用");
+
+        ++m_deleteIndex;
+        deleteNextRemoteFolder();
+
+        return;
+    }
+
+    // 远端删除的目标始终是原子文件夹（集合）。
+    m_ownClient->removeFile(path, true);
+}
+
+void SyncService::onRemoveFinished(
     const QString &remotePath,
     bool ok,
     const QString &error)
 {
-    if (!m_remoteDeletionInProgress) {
+    const QString normalized =
+        layout::normalizeRemotePath(remotePath);
+
+    // ---- 同步过程中的墓碑清理 ----
+
+    if (m_job.active && m_job.drainingDeletes) {
+
+        MetadataStore store;
+
+        if (openStore(store)) {
+
+            if (ok) {
+
+                store.clearPendingDelete(normalized);
+
+            } else {
+
+                /*
+                 * 删除失败时保留墓碑，
+                 * 下一轮同步重试。
+                 */
+                qWarning()
+                    << "SyncService: 清理远端残留失败"
+                    << normalized
+                    << error;
+
+                m_job.hasError = true;
+
+                if (m_job.error.isEmpty()) {
+                    m_job.error = error;
+                }
+            }
+        }
+
+        deleteNextPendingDelete();
+
         return;
     }
 
-    const QString normalized =
-        normalizeRemotePath(
-            remotePath);
+    // ---- 用户主动的远端删除 ----
+
+    if (!m_deleting) {
+        return;
+    }
 
     if (!ok) {
 
-        m_remoteDeletionHasError = true;
-
-        if (m_remoteDeletionError.isEmpty()) {
-            m_remoteDeletionError =
-                QStringLiteral(
-                    "删除 %1 失败：%2")
-                    .arg(
-                        normalized,
-                        error);
-        }
-
         qWarning()
-            << "WebDAV 删除失败:"
+            << "SyncService: 远端删除失败"
             << normalized
             << error;
 
+        m_deleteHasError = true;
+
+        if (m_deleteError.isEmpty()) {
+            m_deleteError = error;
+        }
+
     } else {
 
-        qDebug()
-        << "WebDAV 删除成功:"
-        << normalized;
+        // ---- 同步清理本地元数据与缓存 ----
+
+        const QString fileId =
+            m_deleteFolderIds.take(normalized);
+
+        if (!fileId.isEmpty()) {
+
+            MetadataStore store;
+
+            if (openStore(store)) {
+
+                const FileItem folder =
+                    store.fileById(fileId);
+
+                if (folder.isValid()) {
+
+                    const QVector<FileItem> children =
+                        store.childrenOf(
+                            folder.id,
+                            folder.space);
+
+                    for (const FileItem &child : children) {
+
+                        if (!child.localPath.isEmpty()) {
+                            QFile::remove(child.localPath);
+                        }
+
+                        store.removeFile(child.id);
+                    }
+
+                    if (!folder.localPath.isEmpty()) {
+
+                        QDir(folder.localPath)
+                            .removeRecursively();
+                    }
+
+                    store.removeFile(folder.id);
+                }
+            }
+        }
     }
 
-    ++m_remoteDeleteQueueIndex;
+    ++m_deleteIndex;
 
-    deleteNextRemoteAtomicFolder();
+    deleteNextRemoteFolder();
 }
 
 } // namespace litapp

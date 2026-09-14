@@ -1,609 +1,489 @@
 #pragma once
 
 #include "models/FileItem.h"
+#include "storage/MetadataStore.h"
 
-#include <QList>
+#include <QDateTime>
+#include <QHash>
 #include <QObject>
 #include <QPair>
 #include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
-#include <QVariantList>
+#include <QVector>
 
 namespace litapp {
 
 class WebDavClient;
 
 /*
- * ============================================================
+ * ================================================================
  * SyncService
- * ============================================================
+ * ================================================================
  *
- * WebDAV 与 App 内部逻辑树是两个不同的层。
+ * 远端是「云仓库」，是原子对象的事实来源。
  *
- * App 内部：
+ * 本服务的职责：
  *
- *     my doc
- *         ├── folder A
- *         │    ├── file 1
- *         │    └── file 2
- *         └── folder B
+ *   1. 保证远端骨架存在
+ *          /zesbks/
+ *          /zesbks/group/
+ *          /zesbks/group/group me/
  *
- *     group me
- *         ├── folder C
- *         └── file 3
+ *   2. 远端 -> 应用内  发现（index）
+ *          PROPFIND 远端原子文件夹，
+ *          把结果物化成本地 SQLite 中的
+ *          AtomicFolder / AtomicFile 条目。
  *
- *     group us
- *         ├── folder D
- *         └── file 4
+ *   3. 本地 -> 远端  上传
+ *          仅对「我自己的账号」，
+ *          且只上传本地确实存在的文件。
  *
+ *   4. 按需下载
+ *          双击远端条目时才 GET 到本地缓存。
  *
- * WebDAV：
+ *   5. 远端删除
+ *          只允许删除「我自己的账号」下的
+ *          一级 Atomic Folder。
  *
- *     /zesbks/
- *         ├── AtomicFolder1/
- *         │    └── AtomicFile1.pdf
- *         ├── AtomicFolder2/
- *         │    └── AtomicFile2.docx
- *         └── group/
- *              ├── AtomicFolder3/
- *              │    └── AtomicFile3.pdf
- *              └── AtomicFolder4/
- *                   └── AtomicFile4.docx
+ * ================================================================
+ * 重要：远端没有分类文件夹层级
+ * ================================================================
  *
+ * 应用内的子分类文件夹是纯逻辑概念，
+ * 只存在于 SQLite 的 parent_id，
+ * 绝不映射为远端目录。
  *
- * 重要原则：
+ * 因此「移动」不会产生任何 WebDAV 操作。
  *
- * 1. App 内部的 folder hierarchy 不直接映射成 WebDAV hierarchy。
+ * ================================================================
+ * 只读来源
+ * ================================================================
  *
- * 2. my doc：
+ * FileSpace::GroupUs 指向他人账号。
  *
- *       WebDAV /zesbks/
+ * 对本服务而言该 Job 是只读的：
  *
- *    但不读取：
- *
- *       /zesbks/group/
- *
- * 3. group me：
- *
- *       WebDAV /zesbks/group/
- *
- * 4. group us：
- *
- *       WebDAV 某个远程账号的 /zesbks/group/
- *
- * 5. Atomic Folder 是 WebDAV 上的同步原子单位。
- *
- *       AtomicFolder/
- *           └── AtomicFile
- *
- * 6. Atomic Folder 的名字与 Atomic File 的名字彼此独立。
- *
- * 7. App 中的分类 category、tag 等元数据不决定 WebDAV
- *    的物理目录结构。
- *
- * 8. group doc 旧概念彻底废弃。
+ *     只 PROPFIND
+ *     永不 MKCOL / PUT / DELETE
  */
 class SyncService : public QObject
 {
     Q_OBJECT
 
 public:
-
     explicit SyncService(
-        WebDavClient *client,
+        WebDavClient *ownClient,
         QObject *parent = nullptr);
 
-    /*
-     * ========================================================
-     * Sync
-     * ========================================================
-     */
+    ~SyncService() override;
 
-    /*
-     * 同步指定的 App 空间。
-     *
-     * space：
-     *
-     *     FileSpace::MyDoc
-     *     FileSpace::GroupMe
-     *     FileSpace::GroupUs
-     *
-     * sourceId：
-     *
-     *     对 MyDoc / GroupMe 通常为空。
-     *
-     *     对 GroupUs：
-     *     用于标识具体的远程群组来源。
-     */
+    // ========================================================
+    // Database
+    // ========================================================
+
+    void setDatabasePath(
+        const QString &databasePath);
+
+    QString databasePath() const;
+
+    // ========================================================
+    // 同步入口
+    // ========================================================
+
+    // 我的账号：my doc
+    Q_INVOKABLE void syncMyDoc();
+
+    // 我的账号：group me
+    Q_INVOKABLE void syncGroupMe(
+        const QString &groupId = QString());
+
+    // 他人账号：group us（只读）
+    Q_INVOKABLE void syncGroupUs(
+        const QString &sourceId);
+
+    // 我的账号：my doc + 全部 group me
+    Q_INVOKABLE void syncMyAccount();
+
+    // 全部空间
+    Q_INVOKABLE void syncAll();
+
+    // 兼容入口：
+    //   space = 0 -> MyDoc
+    //   space = 1 -> GroupMe
+    //   space = 2 -> GroupUs
     Q_INVOKABLE void syncSpace(
         int space,
         const QString &sourceId = QString());
 
-    /*
-     * 设置当前活动同步空间。
-     */
-    Q_INVOKABLE void setActiveSpace(
-        int space,
-        const QString &sourceId = QString());
+    Q_INVOKABLE bool isSyncing() const;
 
-    /*
-     * 自动同步。
-     */
+    // ========================================================
+    // 自动同步
+    // ========================================================
+
     Q_INVOKABLE void startAutoSync(
         int intervalMs = 180000);
 
     Q_INVOKABLE void stopAutoSync();
 
-    /*
-     * ========================================================
-     * Remote deletion
-     * ========================================================
-     */
+    // ========================================================
+    // 远端骨架
+    // ========================================================
 
     /*
-     * 删除一个远程 Atomic Folder。
+     * 幂等创建：
      *
-     * 合法：
+     *     /zesbks/
+     *     /zesbks/group/
+     *     /zesbks/group/group me/
      *
-     *     /zesbks/AtomicFolder
+     * WebDAV 验证成功后由 UI 调用。
+     */
+    Q_INVOKABLE void ensureRemoteLayout();
+
+    // ========================================================
+    // 他人群组数据源（GroupUs）
+    // ========================================================
+
+    /*
+     * 已配置的 group us 来源。
      *
-     *     /zesbks/group/AtomicFolder
+     * 每项：
+     *     { sourceId, displayName, serverUrl,
+     *       username, password, remoteRoot, lastSync }
+     */
+    Q_INVOKABLE QVariantList groupSources() const;
+
+    /*
+     * 新增 / 更新一个只读群组来源。
      *
-     * 非法：
+     * remoteRoot 为空时使用默认的
+     * /zesbks/group/group me
+     */
+    Q_INVOKABLE bool saveGroupSource(
+        const QString &sourceId,
+        const QString &displayName,
+        const QString &serverUrl,
+        const QString &username,
+        const QString &password,
+        const QString &remoteRoot);
+
+    Q_INVOKABLE bool removeGroupSource(
+        const QString &sourceId);
+
+    // ========================================================
+    // 按需下载
+    // ========================================================
+
+    /*
+     * 把远端 AtomicFile 下载到本地镜像缓存。
      *
-     *     /zesbks
+     * 成功后 FileItem.localPath 会指向缓存文件。
+     */
+    Q_INVOKABLE bool downloadItem(
+        const QString &fileId);
+
+    /*
+     * 本地文件被修改后回推远端。
+     */
+    Q_INVOKABLE bool uploadItem(
+        const QString &fileId);
+
+    // ========================================================
+    // 远端删除
+    // ========================================================
+
+    /*
+     * 删除一个远端 Atomic Folder。
      *
-     *     /zesbks/group
+     * fileId 必须是：
      *
-     *     /zesbks/AtomicFolder/file.pdf
+     *     space = MyDoc 或 GroupMe
+     *     objectType = AtomicFolder
+     *
+     * GroupUs 永远是只读的。
      */
     Q_INVOKABLE void deleteRemoteAtomicFolder(
-        const QString &remoteAtomicFolderPath,
-        const QString &sourceId = QString());
-
-    /*
-     * 批量删除远程 Atomic Folder。
-     */
-    Q_INVOKABLE void deleteRemoteAtomicFolders(
-        const QStringList &remoteAtomicFolderPaths,
-        const QString &sourceId = QString());
+        const QString &fileId);
 
 signals:
 
-    /*
-     * 普通同步完成。
-     */
     void syncFinished(
         bool ok,
         const QString &message);
 
-    /*
-     * 远程 Atomic Folder 删除完成。
-     */
+    // 远端骨架（zesbks/ 与 group 根）已就绪。
+    void remoteLayoutReady();
+
     void remoteDeletionFinished(
         bool ok,
         const QString &message);
 
-private slots:
-
-    /*
-     * 自动同步。
-     */
-    void autoSync();
-
-    /*
-     * ========================================================
-     * WebDAV callbacks
-     * ========================================================
-     */
-
-    void handleDirectoryListed(
-        const QString &path,
-        const QVariantList &entries,
-        const QString &error);
-
-    void handleDirectoryCreated(
-        const QString &remotePath,
-        bool ok,
-        const QString &error);
-
-    void handleUploadFinished(
-        const QString &remotePath,
-        bool ok,
-        const QString &error);
-
-    void handleDownloadFinished(
+    void itemDownloaded(
+        const QString &fileId,
         const QString &remotePath,
         const QString &localPath,
         bool ok,
         const QString &error);
 
-    void handleRemoveFinished(
+    void libraryChanged();
+
+    void statusMessage(
+        const QString &message);
+
+private slots:
+
+    void onDirectoryListed(
+        const QString &path,
+        const QVariantList &entries,
+        const QString &error);
+
+    void onDirectoryCreated(
         const QString &remotePath,
         bool ok,
         const QString &error);
 
+    void onUploadFinished(
+        const QString &remotePath,
+        bool ok,
+        const QString &error);
+
+    void onDownloadFinished(
+        const QString &remotePath,
+        const QString &localPath,
+        bool ok,
+        const QString &error);
+
+    void onRemoveFinished(
+        const QString &remotePath,
+        bool ok,
+        const QString &error);
+
+    void onAutoSyncTimeout();
+
 private:
 
+    // ========================================================
+    // 远端条目
+    // ========================================================
+
+    struct RemoteEntry {
+        QString path;
+        QString name;
+        bool isDirectory = false;
+        qint64 size = 0;
+        QDateTime modified;
+    };
+
     /*
-     * ========================================================
-     * Sync state
-     * ========================================================
+     * 远端的一个原子文件夹。
+     *
+     *     /zesbks/paper/
+     *         paper.pdf
      */
+    struct RemoteFolder {
+        QString name;
+        QString remotePath;
+        QVector<RemoteEntry> files;
+    };
 
-    FileSpace currentSpace() const;
+    // ========================================================
+    // 一次同步任务
+    // ========================================================
 
-    QString currentSourceId() const;
+    struct Job {
+        bool active = false;
 
-    void finish(
+        FileSpace space = FileSpace::MyDoc;
+
+        // MyDoc 为空；GroupMe 为群组目录名
+        QString groupId;
+
+        // GroupUs 的数据源标识；其余为空
+        QString sourceId;
+
+        // 该 Job 对应的远端根
+        QString remoteRoot;
+
+        // GroupUs 恒为 true
+        bool readOnly = false;
+
+        WebDavClient *client = nullptr;
+
+        bool hasError = false;
+        QString error;
+
+        // ---- 远端发现 ----
+        int pendingListings = 0;
+        QSet<QString> visited;
+        QVector<RemoteFolder> folders;
+        QHash<QString, int> folderIndexByPath;
+
+        // ---- 目录创建 ----
+        int directoryIndex = 0;
+        QStringList directoryQueue;
+
+        // ---- 上传 ----
+        int uploadIndex = 0;
+        QList<QPair<QString, QString>> uploadQueue;
+
+        // ---- 远端根目录补建 ----
+        bool bootstrappedRoot = false;
+        bool bootstrappingRoot = false;
+
+        // ---- 待删除的远端残留（墓碑） ----
+        bool drainingDeletes = false;
+        int pendingDeleteIndex = 0;
+        QList<QPair<QString, bool>> pendingDeleteQueue;
+    };
+
+    // ========================================================
+    // Job 生命周期
+    // ========================================================
+
+    struct PendingJob {
+        FileSpace space = FileSpace::MyDoc;
+        QString groupId;
+        QString sourceId;
+        bool readOnly = false;
+    };
+
+    bool startJob(
+        FileSpace space,
+        const QString &groupId,
+        const QString &sourceId,
+        bool readOnly);
+
+    void enqueueJob(
+        FileSpace space,
+        const QString &groupId,
+        const QString &sourceId,
+        bool readOnly);
+
+    void startNextQueuedJob();
+
+    void finishJob(
         bool ok,
         const QString &message);
 
-    /*
-     * ========================================================
-     * Local roots
-     * ========================================================
-     *
-     * 本地目录结构与 WebDAV 结构分离。
-     *
-     * 这里的 root 只是 App 本地工作区。
-     */
+    // ========================================================
+    // 远端发现
+    // ========================================================
 
-    QString localSpaceRoot(
-        FileSpace space,
-        const QString &sourceId = QString()) const;
+    void beginRemoteScan();
 
-    /*
-     * ========================================================
-     * Remote roots
-     * ========================================================
-     *
-     * WebDAV 物理结构：
-     *
-     * MyDoc:
-     *
-     *     /zesbks/
-     *
-     * GroupMe:
-     *
-     *     /zesbks/group/
-     *
-     * GroupUs:
-     *
-     *     /zesbks/group/
-     *
-     * 注意：
-     *
-     * GroupUs 的 sourceId 决定使用哪个远程账号，
-     * 但不会改变该账号内部的 WebDAV 路径。
-     */
+    void requestFolderListing(
+        const QString &remotePath);
 
-    QString remoteSpaceRoot(
-        FileSpace space) const;
+    void afterListingComplete();
 
-    /*
-     * ========================================================
-     * Metadata
-     * ========================================================
-     */
+    void continueAfterDeletes();
 
-    QVector<FileItem> loadSpaceItems(
-        FileSpace space,
-        const QString &sourceId = QString()) const;
+    void deleteNextPendingDelete();
 
-    QVector<FileItem> atomicFilesForFolder(
-        const FileItem &atomicFolder) const;
+    // ========================================================
+    // 物化到 SQLite
+    // ========================================================
 
-    QVector<FileItem> descendantItems(
+    void reconcileWithStore();
+
+    QVector<FileItem> storeChildren(
         const QString &parentId,
         FileSpace space,
-        const QString &sourceId = QString()) const;
+        const QString &sourceId,
+        const QString &groupId) const;
 
-    /*
-     * ========================================================
-     * Atomic Folder / Atomic File
-     * ========================================================
-     */
+    // ========================================================
+    // 上传
+    // ========================================================
 
-    bool isAtomicFolder(
-        const FileItem &item) const;
+    void prepareUploads();
 
-    bool isAtomicFile(
-        const FileItem &item) const;
+    void startDirectoryCreation();
 
-    bool isLocalAtomicFolder(
-        const QString &path) const;
-
-    /*
-     * 获取某个 Atomic Folder 下的所有 Atomic File。
-     */
-    QStringList collectAtomicFolderFiles(
-        const QString &atomicFolderPath) const;
-
-    /*
-     * 根据本地 Atomic File 找到所属 Atomic Folder。
-     */
-    QString atomicFolderForLocalFile(
-        const QString &localFilePath) const;
-
-    /*
-     * ========================================================
-     * Remote path mapping
-     * ========================================================
-     *
-     * 这里是整个新架构最重要的部分。
-     *
-     * App hierarchy：
-     *
-     *     parentId
-     *
-     * 不直接转换成：
-     *
-     *     /zesbks/parent/child
-     *
-     * WebDAV 只根据 Atomic Folder / Atomic File 关系
-     * 构建物理路径。
-     */
-
-    QString remoteAtomicFolderPathForItem(
-        const FileItem &item) const;
-
-    QString remoteAtomicFilePathForItem(
-        const FileItem &item) const;
-
-    /*
-     * ========================================================
-     * Upload
-     * ========================================================
-     */
-
-    void enqueueAtomicFolderUpload(
-        const FileItem &atomicFolder);
+    void createNextDirectory();
 
     void startUploads();
 
     void uploadNextFile();
 
+    // ========================================================
+    // 删除
+    // ========================================================
 
+    void deleteNextRemoteFolder();
 
-    void scanLocalFiles();
-    void trackOperation();
+    // ========================================================
+    // 辅助
+    // ========================================================
 
+    WebDavClient *clientForSource(
+        const QString &sourceId);
 
-    /*
-     * ========================================================
-     * Remote scan
-     * ========================================================
-     */
+    bool isJobClient() const;
 
-    void startRemoteScan();
+    QString jobLabel() const;
 
-    void scanRemoteDirectory(
-        const QString &remotePath);
+    // 群组目录的远端根（自动适配两种情况）
+    QString groupRootFor(
+        const QString &groupId) const;
 
-    void processRemoteAtomicFolder(
-        const QString &remotePath,
-        const QVariantMap &entry);
+    bool openStore(
+        MetadataStore &store) const;
 
-    /*
-     * ========================================================
-     * Remote path utilities
-     * ========================================================
-     */
+    QVector<FileItem> allItemsOfJob() const;
 
-    QString normalizeRemotePath(
-        const QString &path) const;
+    FileItem findAtomicFolderByName(
+        const QString &name) const;
 
-    QString remoteParentPath(
-        const QString &remotePath) const;
-
-    /*
-     * 把某个远程文件需要的父目录加入创建队列。
-     */
-    void addParentDirectories(
-        const QString &remotePath);
-
-    /*
-     * 为 Atomic Folder 加入必要目录。
-     */
-    void addAtomicFolderDirectories(
-        const FileItem &atomicFolder);
-
-    /*
-     * ========================================================
-     * Directory creation
-     * ========================================================
-     */
-
-    void startDirectoryCreation();
-
-    void createNextRemoteDirectory();
-
-    /*
-     * ========================================================
-     * Remote deletion
-     * ========================================================
-     */
-
-    void enqueueRemoteAtomicFolderDeletion(
-        const QString &remoteAtomicFolderPath);
-
-    void startRemoteDeletion();
-
-    void deleteNextRemoteAtomicFolder();
-
-    /*
-     * ========================================================
-     * Helpers
-     * ========================================================
-     */
-
-    /*
-     * 返回指定 Atomic Folder 的本地所有文件。
-     */
-    QStringList atomicFolderFiles(
-        const FileItem &atomicFolder) const;
-
-    /*
-     * 把本地 Atomic Folder 转换成远程 Atomic Folder。
-     */
-    QString remoteAtomicFolderPathForLocalPath(
-        const QString &localAtomicFolderPath) const;
-
-    /*
-     * 检查远程路径是否属于当前同步空间。
-     */
-    bool isRemotePathInCurrentSpace(
-        const QString &remotePath) const;
+    static QVector<RemoteEntry> toRemoteEntries(
+        const QVariantList &entries);
 
 private:
 
-    /*
-     * ========================================================
-     * WebDAV client
-     * ========================================================
-     */
+    WebDavClient *m_ownClient = nullptr;
 
-    WebDavClient *m_client = nullptr;
-
-    /*
-     * ========================================================
-     * Auto sync
-     * ========================================================
-     */
+    QHash<QString, WebDavClient *> m_sourceClients;
 
     QTimer *m_timer = nullptr;
 
-    /*
-     * ========================================================
-     * Active space
-     * ========================================================
-     */
+    QString m_databasePath =
+        QStringLiteral("litapp_metadata.db");
 
-    FileSpace m_activeSpace =
-        FileSpace::MyDoc;
+    Job m_job;
+
+    // 顺序执行的待办任务队列
+    QList<PendingJob> m_pendingJobs;
 
     /*
-     * GroupUs 时表示具体的远程来源。
+     * 最近一次扫描 /zesbks 时看到的子目录名。
      *
-     * MyDoc / GroupMe 通常为空。
-     */
-    QString m_activeSourceId;
-
-    /*
-     * ========================================================
-     * Database
-     * ========================================================
-     */
-
-    QString m_databasePath;
-
-    /*
-     * ========================================================
-     * Sync state
-     * ========================================================
-     */
-
-    bool m_syncInProgress = false;
-
-    bool m_hasError = false;
-
-    QString m_syncError;
-
-    /*
-     * 当前尚未完成的异步操作。
-     */
-    int m_pendingOps = 0;
-
-    /*
-     * 当前尚未完成的远程目录查询。
-     */
-    int m_pendingDirectoryListings = 0;
-
-    /*
-     * ========================================================
-     * Remote state
-     * ========================================================
-     */
-
-    /*
-     * 已经发现的远程路径。
-     */
-    QSet<QString> m_remoteNames;
-
-    /*
-     * PROPFIND 得到的远程对象。
-     */
-    QVariantList m_remoteEntries;
-
-    /*
-     * 已经扫描过的目录。
-     */
-    QSet<QString> m_visitedDirs;
-
-    /*
-     * ========================================================
-     * Remote directory creation queue
-     * ========================================================
-     */
-
-    QStringList m_directoryQueue;
-
-    int m_directoryQueueIndex = 0;
-
-    /*
-     * ========================================================
-     * Atomic Folder queue
-     * ========================================================
-     */
-
-    QStringList m_atomicFolderQueue;
-
-    int m_atomicFolderQueueIndex = 0;
-
-    QString m_currentAtomicFolder;
-
-    /*
-     * ========================================================
-     * Upload queue
-     * ========================================================
+     * 用来判断远端群组目录的真实布局：
      *
-     * <localPath, remotePath>
-     */
-
-    QList<QPair<QString, QString>> m_uploadQueue;
-
-    int m_uploadQueueIndex = 0;
-
-    /*
-     * ========================================================
-     * Download queue
-     * ========================================================
+     *     zesbks/group/group me/
+     *     zesbks/group me/
      *
-     * <remotePath, localPath>
+     * 两种都能自动适配。
      */
+    QSet<QString> m_shareRootChildren;
 
-    QList<QPair<QString, QString>> m_downloadQueue;
+    // ---- 按需下载 ----
+    QHash<QString, QString> m_pendingDownloadIds;
 
-    int m_downloadQueueIndex = 0;
+    // ---- 远端删除 ----
+    bool m_deleting = false;
+    int m_deleteIndex = 0;
+    QStringList m_deleteQueue;
+    QHash<QString, QString> m_deleteFolderIds;
+    bool m_deleteHasError = false;
+    QString m_deleteError;
 
-    /*
-     * ========================================================
-     * Remote deletion queue
-     * ========================================================
-     */
-
-    QStringList m_remoteDeleteQueue;
-
-    int m_remoteDeleteQueueIndex = 0;
-
-    bool m_remoteDeletionInProgress = false;
-
-    bool m_remoteDeletionHasError = false;
-
-    QString m_remoteDeletionError;
+    // ---- 骨架创建 ----
+    bool m_layoutCreationInProgress = false;
+    int m_layoutIndex = 0;
+    QStringList m_layoutQueue;
 };
 
 } // namespace litapp

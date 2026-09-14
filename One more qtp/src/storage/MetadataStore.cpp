@@ -118,6 +118,7 @@ bool MetadataStore::createTables()
         "  object_type INTEGER NOT NULL DEFAULT 2,"
         "  space INTEGER NOT NULL DEFAULT 0,"
         "  source_id TEXT,"
+        "  group_id TEXT,"
         "  local_path TEXT,"
         "  remote_path TEXT,"
         "  extension TEXT,"
@@ -147,6 +148,51 @@ bool MetadataStore::createTables()
         ")"));
 
     if (!tagsTableOk) {
+        return false;
+    }
+
+    // ========================================================
+    // sources
+    // ========================================================
+    //
+    // 他人群组数据源（FileSpace::GroupUs）。
+    //
+    // 每个来源保存对方 WebDAV 的：
+    //
+    //     地址 / 账号 / 密码 / 群组根目录
+    //
+    // 本表内容永远只用于读取，
+    // 不会用于向对方账号写入。
+    // ========================================================
+
+    const bool sourcesTableOk = query.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS sources ("
+        "  source_id TEXT PRIMARY KEY,"
+        "  display_name TEXT,"
+        "  server_url TEXT,"
+        "  username TEXT,"
+        "  password TEXT,"
+        "  remote_root TEXT,"
+        "  read_only INTEGER DEFAULT 1,"
+        "  last_sync TEXT"
+        ")"));
+
+    if (!sourcesTableOk) {
+        return false;
+    }
+
+    // ========================================================
+    // pending_deletes
+    // ========================================================
+
+    const bool pendingTableOk = query.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS pending_deletes ("
+        "  remote_path TEXT PRIMARY KEY,"
+        "  source_id TEXT,"
+        "  is_collection INTEGER DEFAULT 0"
+        ")"));
+
+    if (!pendingTableOk) {
         return false;
     }
 
@@ -187,6 +233,16 @@ bool MetadataStore::createTables()
     query.exec(QStringLiteral(
         "ALTER TABLE files "
         "ADD COLUMN source_id TEXT"));
+
+    // group_id
+    query.exec(QStringLiteral(
+        "ALTER TABLE files "
+        "ADD COLUMN group_id TEXT"));
+
+    // pending_deletes.is_collection
+    query.exec(QStringLiteral(
+        "ALTER TABLE pending_deletes "
+        "ADD COLUMN is_collection INTEGER DEFAULT 0"));
 
     // annotations_path
     query.exec(QStringLiteral(
@@ -354,6 +410,7 @@ bool MetadataStore::addFile(const FileItem &item)
         "  object_type,"
         "  space,"
         "  source_id,"
+        "  group_id,"
         "  local_path,"
         "  remote_path,"
         "  extension,"
@@ -366,7 +423,7 @@ bool MetadataStore::addFile(const FileItem &item)
         "  is_trashed,"
         "  original_local_path"
         ") VALUES ("
-        "  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+        "  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
         ")"));
 
     query.addBindValue(item.id);
@@ -375,6 +432,7 @@ bool MetadataStore::addFile(const FileItem &item)
     query.addBindValue(static_cast<int>(item.objectType));
     query.addBindValue(static_cast<int>(item.space));
     query.addBindValue(item.sourceId);
+    query.addBindValue(item.groupId);
     query.addBindValue(item.localPath);
     query.addBindValue(item.remotePath);
     query.addBindValue(item.extension);
@@ -456,6 +514,7 @@ bool MetadataStore::updateFile(const FileItem &item)
         "  object_type = ?, "
         "  space = ?, "
         "  source_id = ?, "
+        "  group_id = ?, "
         "  local_path = ?, "
         "  remote_path = ?, "
         "  extension = ?, "
@@ -472,6 +531,7 @@ bool MetadataStore::updateFile(const FileItem &item)
     query.addBindValue(static_cast<int>(item.objectType));
     query.addBindValue(static_cast<int>(item.space));
     query.addBindValue(item.sourceId);
+    query.addBindValue(item.groupId);
     query.addBindValue(item.localPath);
     query.addBindValue(item.remotePath);
     query.addBindValue(item.extension);
@@ -737,6 +797,10 @@ static FileItem fileItemFromQuery(
         query.value(
                  QStringLiteral("source_id")).toString();
 
+    item.groupId =
+        query.value(
+                 QStringLiteral("group_id")).toString();
+
     item.localPath =
         query.value(
                  QStringLiteral("local_path")).toString();
@@ -814,6 +878,7 @@ QVector<FileItem> MetadataStore::files(
         "  f.object_type, "
         "  f.space, "
         "  f.source_id, "
+        "  f.group_id, "
         "  f.local_path, "
         "  f.remote_path, "
         "  f.extension, "
@@ -877,6 +942,7 @@ QVector<FileItem> MetadataStore::childrenOf(
             "  f.object_type, "
             "  f.space, "
             "  f.source_id, "
+            "  f.group_id, "
             "  f.local_path, "
             "  f.remote_path, "
             "  f.extension, "
@@ -913,6 +979,7 @@ QVector<FileItem> MetadataStore::childrenOf(
             "  f.object_type, "
             "  f.space, "
             "  f.source_id, "
+            "  f.group_id, "
             "  f.local_path, "
             "  f.remote_path, "
             "  f.extension, "
@@ -991,6 +1058,7 @@ QVector<FileItem> MetadataStore::trashFiles(
         "  f.object_type, "
         "  f.space, "
         "  f.source_id, "
+        "  f.group_id, "
         "  f.local_path, "
         "  f.remote_path, "
         "  f.extension, "
@@ -1107,6 +1175,7 @@ FileItem MetadataStore::fileById(
         "  f.object_type, "
         "  f.space, "
         "  f.source_id, "
+        "  f.group_id, "
         "  f.local_path, "
         "  f.remote_path, "
         "  f.extension, "
@@ -1178,6 +1247,336 @@ QVector<FileItem> MetadataStore::filesByTag(
     }
 
     return result;
+}
+
+// ============================================================
+// Helper: build GroupSource
+// ============================================================
+
+static GroupSource groupSourceFromQuery(
+    const QSqlQuery &query)
+{
+    GroupSource source;
+
+    source.sourceId =
+        query.value(
+                 QStringLiteral("source_id")).toString();
+
+    source.displayName =
+        query.value(
+                 QStringLiteral("display_name")).toString();
+
+    source.serverUrl =
+        query.value(
+                 QStringLiteral("server_url")).toString();
+
+    source.username =
+        query.value(
+                 QStringLiteral("username")).toString();
+
+    source.password =
+        query.value(
+                 QStringLiteral("password")).toString();
+
+    source.remoteRoot =
+        query.value(
+                 QStringLiteral("remote_root")).toString();
+
+    source.readOnly =
+        query.value(
+                 QStringLiteral("read_only")).toInt() != 0;
+
+    source.lastSync =
+        QDateTime::fromString(
+            query.value(
+                QStringLiteral("last_sync")).toString(),
+            Qt::ISODate);
+
+    return source;
+}
+
+// ============================================================
+// Sources
+// ============================================================
+
+QVector<GroupSource> MetadataStore::sources() const
+{
+    QVector<GroupSource> result;
+
+    if (!m_db) {
+        return result;
+    }
+
+    QSqlQuery query(*m_db);
+
+    query.prepare(QStringLiteral(
+        "SELECT "
+        "  source_id, "
+        "  display_name, "
+        "  server_url, "
+        "  username, "
+        "  password, "
+        "  remote_root, "
+        "  read_only, "
+        "  last_sync "
+        "FROM sources "
+        "ORDER BY display_name COLLATE NOCASE ASC"));
+
+    if (!query.exec()) {
+        return result;
+    }
+
+    while (query.next()) {
+        result.append(
+            groupSourceFromQuery(query));
+    }
+
+    return result;
+}
+
+GroupSource MetadataStore::sourceById(
+    const QString &sourceId) const
+{
+    if (!m_db || sourceId.isEmpty()) {
+        return GroupSource{};
+    }
+
+    QSqlQuery query(*m_db);
+
+    query.prepare(QStringLiteral(
+        "SELECT "
+        "  source_id, "
+        "  display_name, "
+        "  server_url, "
+        "  username, "
+        "  password, "
+        "  remote_root, "
+        "  read_only, "
+        "  last_sync "
+        "FROM sources "
+        "WHERE source_id = ?"));
+
+    query.addBindValue(sourceId);
+
+    if (!query.exec()) {
+        return GroupSource{};
+    }
+
+    if (!query.next()) {
+        return GroupSource{};
+    }
+
+    return groupSourceFromQuery(query);
+}
+
+bool MetadataStore::upsertSource(
+    const GroupSource &source)
+{
+    if (!m_db || !source.isValid()) {
+        return false;
+    }
+
+    QSqlQuery update(*m_db);
+
+    update.prepare(QStringLiteral(
+        "UPDATE sources SET "
+        "  display_name = ?, "
+        "  server_url = ?, "
+        "  username = ?, "
+        "  password = ?, "
+        "  remote_root = ?, "
+        "  read_only = ? "
+        "WHERE source_id = ?"));
+
+    update.addBindValue(source.displayName);
+    update.addBindValue(source.serverUrl);
+    update.addBindValue(source.username);
+    update.addBindValue(source.password);
+    update.addBindValue(source.remoteRoot);
+
+    // 他人群组永远是只读的。
+    update.addBindValue(1);
+
+    update.addBindValue(source.sourceId);
+
+    if (!update.exec()) {
+        return false;
+    }
+
+    if (update.numRowsAffected() > 0) {
+        return true;
+    }
+
+    QSqlQuery insert(*m_db);
+
+    insert.prepare(QStringLiteral(
+        "INSERT INTO sources ("
+        "  source_id, "
+        "  display_name, "
+        "  server_url, "
+        "  username, "
+        "  password, "
+        "  remote_root, "
+        "  read_only, "
+        "  last_sync"
+        ") VALUES (?, ?, ?, ?, ?, ?, 1, ?)"));
+
+    insert.addBindValue(source.sourceId);
+    insert.addBindValue(source.displayName);
+    insert.addBindValue(source.serverUrl);
+    insert.addBindValue(source.username);
+    insert.addBindValue(source.password);
+    insert.addBindValue(source.remoteRoot);
+
+    insert.addBindValue(
+        source.lastSync.isValid()
+            ? source.lastSync.toString(Qt::ISODate)
+            : QVariant());
+
+    return insert.exec();
+}
+
+bool MetadataStore::removeSource(
+    const QString &sourceId)
+{
+    if (!m_db || sourceId.isEmpty()) {
+        return false;
+    }
+
+    // ========================================================
+    // 同时清理该来源在 files 中的全部条目。
+    // ========================================================
+
+    QSqlQuery files(*m_db);
+
+    files.prepare(QStringLiteral(
+        "DELETE FROM files "
+        "WHERE source_id = ?"));
+
+    files.addBindValue(sourceId);
+
+    if (!files.exec()) {
+        return false;
+    }
+
+    QSqlQuery query(*m_db);
+
+    query.prepare(QStringLiteral(
+        "DELETE FROM sources "
+        "WHERE source_id = ?"));
+
+    query.addBindValue(sourceId);
+
+    if (!query.exec()) {
+        return false;
+    }
+
+    return query.numRowsAffected() > 0;
+}
+
+// ============================================================
+// Pending remote deletes
+// ============================================================
+
+bool MetadataStore::addPendingDelete(
+    const QString &remotePath,
+    const QString &sourceId,
+    bool isCollection)
+{
+    if (!m_db || remotePath.trimmed().isEmpty()) {
+        return false;
+    }
+
+    QSqlQuery query(*m_db);
+
+    query.prepare(QStringLiteral(
+        "INSERT OR REPLACE INTO pending_deletes ("
+        "  remote_path, source_id, is_collection"
+        ") VALUES (?, ?, ?)"));
+
+    query.addBindValue(remotePath.trimmed());
+    query.addBindValue(sourceId);
+    query.addBindValue(isCollection ? 1 : 0);
+
+    return query.exec();
+}
+
+QVector<QPair<QString, bool>> MetadataStore::pendingDeletes(
+    const QString &sourceId) const
+{
+    QVector<QPair<QString, bool>> result;
+
+    if (!m_db) {
+        return result;
+    }
+
+    QSqlQuery query(*m_db);
+
+    query.prepare(QStringLiteral(
+        "SELECT remote_path, COALESCE(is_collection, 0) "
+        "FROM pending_deletes "
+        "WHERE COALESCE(source_id, '') = ? "
+        "ORDER BY remote_path"));
+
+    query.addBindValue(sourceId);
+
+    if (!query.exec()) {
+        return result;
+    }
+
+    while (query.next()) {
+
+        result.append(qMakePair(
+            query.value(0).toString(),
+            query.value(1).toInt() != 0));
+    }
+
+    return result;
+}
+
+bool MetadataStore::clearPendingDelete(
+    const QString &remotePath)
+{
+    if (!m_db || remotePath.isEmpty()) {
+        return false;
+    }
+
+    QSqlQuery query(*m_db);
+
+    query.prepare(QStringLiteral(
+        "DELETE FROM pending_deletes "
+        "WHERE remote_path = ?"));
+
+    query.addBindValue(remotePath);
+
+    return query.exec();
+}
+
+bool MetadataStore::touchSourceSyncTime(
+    const QString &sourceId)
+{
+    if (!m_db || sourceId.isEmpty()) {
+        return false;
+    }
+
+    QSqlQuery query(*m_db);
+
+    query.prepare(QStringLiteral(
+        "UPDATE sources "
+        "SET last_sync = ? "
+        "WHERE source_id = ?"));
+
+    query.addBindValue(
+        QDateTime::currentDateTime()
+            .toString(Qt::ISODate));
+
+    query.addBindValue(sourceId);
+
+    if (!query.exec()) {
+        return false;
+    }
+
+    return query.numRowsAffected() > 0;
 }
 
 } // namespace litapp

@@ -18,6 +18,7 @@ qt_policy(SET QTP0004 NEW)
 
 set(SOURCES
     src/main.cpp
+    src/core/AppLayout.cpp
     src/models/FileItem.cpp
     src/models/FileListModel.cpp
     src/services/AuthService.cpp
@@ -29,6 +30,7 @@ set(SOURCES
 )
 
 set(HEADERS
+    src/core/AppLayout.h
     src/models/FileCategory.h
     src/models/FileItem.h
     src/models/FileListModel.h

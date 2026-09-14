@@ -118,6 +118,12 @@ QVariant FileListModel::data(
     case SourceIdRole:
         return item.sourceId;
 
+    case GroupIdRole:
+        return item.groupId;
+
+    case IsReadOnlyRole:
+        return item.isReadOnly();
+
         // --------------------------------------------------------
         // Sync
         // --------------------------------------------------------
@@ -227,6 +233,14 @@ QHash<int, QByteArray> FileListModel::roleNames() const
     roles.insert(
         SourceIdRole,
         QByteArrayLiteral("sourceId"));
+
+    roles.insert(
+        GroupIdRole,
+        QByteArrayLiteral("groupId"));
+
+    roles.insert(
+        IsReadOnlyRole,
+        QByteArrayLiteral("isReadOnly"));
 
     roles.insert(
         SyncStateRole,
@@ -420,6 +434,10 @@ QVariantList FileListModel::toVariantList() const
             QStringLiteral("sourceId"),
             item.sourceId);
 
+        map.insert(
+            QStringLiteral("groupId"),
+            item.groupId);
+
         // ----------------------------------------------------
         // Paths
         // ----------------------------------------------------
@@ -495,6 +513,10 @@ QVariantList FileListModel::toVariantList() const
         map.insert(
             QStringLiteral("isAtomicFile"),
             item.isAtomicFile());
+
+        map.insert(
+            QStringLiteral("isReadOnly"),
+            item.isReadOnly());
 
         result.append(map);
     }

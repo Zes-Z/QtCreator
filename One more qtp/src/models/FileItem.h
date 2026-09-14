@@ -255,6 +255,29 @@ struct FileItem {
     QString sourceId;
 
 
+    /*
+     * 群组目录名。
+     *
+     * 对 MyDoc：
+     *     恒为空。
+     *
+     * 对 GroupMe：
+     *     表示用户自建的第几个群组目录。
+     *
+     *         第 1 个 -> "group me"
+     *         第 2 个 -> "group me 2"
+     *
+     *     对应远端：
+     *
+     *         /zesbks/group/<groupId>/
+     *
+     * 对 GroupUs：
+     *     远端群组根由 GroupSource 配置决定，
+     *     此字段通常为空。
+     */
+    QString groupId;
+
+
     // ============================================================
     // 本地 / 远程路径
     // ============================================================
@@ -432,6 +455,18 @@ struct FileItem {
     bool isAtomicFile() const
     {
         return objectType == FileObjectType::AtomicFile;
+    }
+
+
+    /*
+     * 是否为只读对象。
+     *
+     * GroupUs 的内容来自他人账号，
+     * 本应用只读取，永远不回写。
+     */
+    bool isReadOnly() const
+    {
+        return space == FileSpace::GroupUs;
     }
 };
 

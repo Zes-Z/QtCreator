@@ -28,6 +28,13 @@ public:
     Q_INVOKABLE void setServer(const QString &serverUrl,
                                const QString &username,
                                const QString &password);
+
+    // 仅在本对象内存中配置连接信息，不写入 QSettings。
+    // 用于 GroupUs 这类「他人账号」的临时客户端。
+    void configureTransient(const QString &serverUrl,
+                            const QString &username,
+                            const QString &password);
+
     Q_INVOKABLE void setToken(const QString &token);
 
     Q_INVOKABLE void restoreSettings();
@@ -39,7 +46,14 @@ public:
     Q_INVOKABLE void uploadFile(const QString &localPath, const QString &remotePath);
     Q_INVOKABLE void downloadFile(const QString &remotePath, const QString &localPath);
     Q_INVOKABLE void createDirectory(const QString &remotePath);
-    Q_INVOKABLE void removeFile(const QString &remotePath);
+    // 删除远端资源。
+    //
+    // isCollection = true 时会补上结尾斜杠：
+    // Apache 对缺少斜杠的目录会先 301，
+    // 而 Qt 跟随时会把 DELETE 降级成 GET，
+    // 导致「没删掉却返回 200」被误判为成功。
+    Q_INVOKABLE void removeFile(const QString &remotePath,
+                                bool isCollection = false);
 
 signals:
     // entries 为 QVariantMap 列表：{ name, path, isDirectory, size }

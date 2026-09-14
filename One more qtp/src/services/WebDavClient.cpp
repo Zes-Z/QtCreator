@@ -44,6 +44,16 @@ void WebDavClient::setServer(const QString &serverUrl,
         password);
 }
 
+void WebDavClient::configureTransient(
+    const QString &serverUrl,
+    const QString &username,
+    const QString &password)
+{
+    m_serverUrl = QUrl(serverUrl);
+    m_username = username;
+    m_password = password;
+}
+
 void WebDavClient::setToken(const QString &token)
 {
     m_token = token;
@@ -114,6 +124,49 @@ static QUrl urlForPath(
     return QUrl(base + path);
 }
 
+/*
+ * 给集合路径补上结尾斜杠。
+ *
+ * 这一步至关重要：
+ *
+ *   Apache 等服务器对缺少结尾斜杠的目录会先返回 301，
+ *   而 Qt 跟随重定向时会把 PROPFIND 降级成 GET，
+ *   于是服务器返回的是目录索引页而不是 multistatus，
+ *   表现为「HTTP 200 + HTML」。
+ *
+ * 直接带上斜杠就不会触发重定向。
+ */
+static QString ensureTrailingSlashPath(const QString &path)
+{
+    QString result = path.trimmed();
+
+    if (result.isEmpty()) {
+        return result;
+    }
+
+    if (!result.endsWith(QLatin1Char('/'))) {
+        result += QLatin1Char('/');
+    }
+
+    return result;
+}
+
+static QUrl ensureTrailingSlash(const QUrl &url)
+{
+    if (url.path().isEmpty()
+        || url.path().endsWith(QLatin1Char('/'))) {
+
+        return url;
+    }
+
+    QUrl result = url;
+
+    result.setPath(
+        url.path() + QLatin1Char('/'));
+
+    return result;
+}
+
 // ============================================================
 // Send WebDAV request
 // ============================================================
@@ -123,7 +176,25 @@ QNetworkReply *WebDavClient::sendRequest(
     const QUrl &url,
     const QByteArray &body)
 {
-    QNetworkRequest request(url);
+    /*
+     * PROPFIND 只用于目录，统一补结尾斜杠。
+     */
+    const QUrl target =
+        method == QStringLiteral("PROPFIND")
+            ? ensureTrailingSlash(url)
+            : url;
+
+    QNetworkRequest request(target);
+
+    /*
+     * 不允许「不安全」的重定向，避免方法被降级：
+     *
+     *   301/302/303 由 Qt 跟随时会改成 GET，
+     *   对 WebDAV 来说目标会变成目录索引页。
+     */
+    request.setAttribute(
+        QNetworkRequest::RedirectPolicyAttribute,
+        QNetworkRequest::NoLessSafeRedirectPolicy);
 
     /*
      * PROPFIND 使用 Depth: 1。
@@ -171,6 +242,7 @@ QNetworkReply *WebDavClient::sendRequest(
             "<d:resourcetype/>"
             "<d:getcontentlength/>"
             "<d:displayname/>"
+            "<d:getlastmodified/>"
             "</d:prop>"
             "</d:propfind>";
 
@@ -298,27 +370,68 @@ void WebDavClient::listDirectory(
 
             reply->deleteLater();
 
+            const int statusCode =
+                reply->attribute(
+                    QNetworkRequest::
+                        HttpStatusCodeAttribute)
+                    .toInt();
+
+            // 先把响应体读出来，便于诊断。
+            const QByteArray payload =
+                reply->readAll();
+
             if (reply->error() !=
                 QNetworkReply::NoError) {
+
+                QString message =
+                    reply->errorString();
+
+                if (statusCode > 0) {
+
+                    message =
+                        QStringLiteral(
+                            "HTTP %1：%2")
+                            .arg(statusCode)
+                            .arg(message);
+                }
+
+                const QString snippet =
+                    QString::fromUtf8(
+                        payload.left(160))
+                        .simplified();
+
+                if (!snippet.isEmpty()) {
+
+                    message +=
+                        QStringLiteral(
+                            "\n服务器返回：%1")
+                            .arg(snippet);
+                }
 
                 emit directoryListed(
                     path,
                     {},
-                    reply->errorString());
+                    message);
 
                 return;
             }
 
             QVariantList entries;
 
-            QXmlStreamReader xml(
-                reply->readAll());
+            QXmlStreamReader xml(payload);
 
             QString currentHref;
+
+            // 必须真的是 WebDAV multistatus，
+            // 否则「解析成功但没有任何条目」会被误判成「远端为空」，
+            // 进而把本地库清空。
+            bool sawMultistatus = false;
 
             bool currentIsDirectory = false;
 
             qint64 currentSize = 0;
+
+            QString currentModified;
 
             bool inResponse = false;
 
@@ -333,6 +446,11 @@ void WebDavClient::listDirectory(
                         xml.name();
 
                     if (name ==
+                        QLatin1String("multistatus")) {
+
+                        sawMultistatus = true;
+
+                    } else if (name ==
                         QLatin1String("response")) {
 
                         inResponse = true;
@@ -343,6 +461,8 @@ void WebDavClient::listDirectory(
                             false;
 
                         currentSize = 0;
+
+                        currentModified.clear();
 
                     } else if (
                         inResponse &&
@@ -370,6 +490,15 @@ void WebDavClient::listDirectory(
                         currentSize =
                             xml.readElementText()
                                 .toLongLong();
+
+                    } else if (
+                        inResponse &&
+                        name ==
+                            QStringLiteral(
+                                "getlastmodified")) {
+
+                        currentModified =
+                            xml.readElementText();
                     }
 
                 } else if (
@@ -400,6 +529,10 @@ void WebDavClient::listDirectory(
                             QStringLiteral("size"),
                             currentSize);
 
+                        entry.insert(
+                            QStringLiteral("modified"),
+                            currentModified);
+
                         entries.append(entry);
                     }
 
@@ -407,13 +540,74 @@ void WebDavClient::listDirectory(
                 }
             }
 
+            /*
+             * HTTP 层成功了，但正文不是 WebDAV 的 multistatus。
+             *
+             * 常见原因：
+             *
+             *   1. 地址填成了网页地址，服务器返回 HTML
+             *   2. 被反向代理挡下，返回登录页或错误页
+             *   3. 需要认证但没有凭据
+             *
+             * 这里把状态码与正文片段带上，便于直接定位。
+             */
+            QString parseError;
+
+            if (xml.hasError()) {
+
+                const QString snippet =
+                    QString::fromUtf8(
+                        payload.left(200))
+                        .simplified();
+
+                parseError =
+                    QStringLiteral(
+                        "WebDAV 响应不是有效的 XML（HTTP %1）")
+                        .arg(statusCode > 0
+                                 ? QString::number(statusCode)
+                                 : QStringLiteral("?"));
+
+                if (snippet.isEmpty()) {
+
+                    parseError +=
+                        QStringLiteral(
+                            "，且响应体为空");
+
+                } else {
+
+                    parseError +=
+                        QStringLiteral(
+                            "：%1")
+                            .arg(snippet);
+                }
+
+            } else if (!sawMultistatus) {
+
+                const QString snippet =
+                    QString::fromUtf8(
+                        payload.left(200))
+                        .simplified();
+
+                parseError =
+                    QStringLiteral(
+                        "响应不是 WebDAV multistatus（HTTP %1）")
+                        .arg(statusCode > 0
+                                 ? QString::number(statusCode)
+                                 : QStringLiteral("?"));
+
+                if (!snippet.isEmpty()) {
+
+                    parseError +=
+                        QStringLiteral(
+                            "：%1")
+                            .arg(snippet);
+                }
+            }
+
             emit directoryListed(
                 path,
                 entries,
-                xml.hasError()
-                    ? QStringLiteral(
-                          "XML 解析失败")
-                    : QString());
+                parseError);
         });
 }
 
@@ -657,8 +851,15 @@ void WebDavClient::createDirectory(
 // ============================================================
 
 void WebDavClient::removeFile(
-    const QString &remotePath)
+    const QString &remotePath,
+    bool isCollection)
 {
+    // 容器必须带结尾斜杠，否则会被重定向并降级成 GET。
+    const QString requestPath =
+        isCollection
+            ? ensureTrailingSlashPath(remotePath)
+            : remotePath;
+
     /*
      * 注意：
      *
@@ -680,7 +881,7 @@ void WebDavClient::removeFile(
      * 2. 删除整个 Atomic Folder
      */
 
-    QString path = remotePath.trimmed();
+    QString path = requestPath.trimmed();
 
     if (path.isEmpty()) {
 

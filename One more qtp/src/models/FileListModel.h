@@ -66,6 +66,8 @@ public:
 
         ParentIdRole,
         SourceIdRole,
+        GroupIdRole,
+        IsReadOnlyRole,
 
         SyncStateRole,
         SyncErrorRole,

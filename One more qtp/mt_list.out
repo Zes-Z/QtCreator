@@ -1,5 +1,0 @@
-[0] Arguments: D:\Qt\MaintenanceTool.exe, li, --root, D:\Qt, --no-proxy
-[25] Operations sanity check succeeded.
-[28] Warning: Cannot create lock file "C:\Users\zzs\AppData\Local\Temp\MaintenanceTool1234865.lock": 另一个程序正在使用此文件，进程无法访问。
- (0x00000020)
-[45] Warning: Another MaintenanceTool instance is already running. Wait until it finishes, close it, or restart your system.

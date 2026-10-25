@@ -1,802 +1,730 @@
 import QtQuick
 import QtQuick.Window
-import QtQuick.Layouts
+import QtQuick.Controls
 import DailyUp 1.0
 
 Window {
-    id: root
+    id: root
 
-    property string currentDate: ""
-    property int dateRefreshKey: 0
+    width: 360
+    height: 640
+    minimumWidth: 320
+    minimumHeight: 400
+    maximumWidth: 560
+    maximumHeight: 900
 
+    visible: true
+    title: "DailyUp"
+    flags: Qt.Window | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
+    color: "transparent"
+
+    property string currentDate: ""
     property date todayDate: new Date()
-    TaskManager {
-        id: taskManager
-    }
-    // 新增：监听跨日信号
+    property int editingIndex: -1
+    property bool ready: false
+
+    readonly property string todayKey: root.dateKey(root.todayDate)
+    readonly property bool viewingToday: root.currentDate === root.todayKey
+    readonly property real completionRatio: taskManager.totalCount > 0
+                                             ? taskManager.completedCount / taskManager.totalCount
+                                             : 0
+    readonly property string dateHeading: root.headingFor(root.currentDate)
+    readonly property string dateWeekday: root.weekdayFor(root.currentDate)
+
+    function two(value) {
+        return String(value).padStart(2, "0")
+    }
+
+    function dateKey(value) {
+        return value.getFullYear() + "-" + root.two(value.getMonth() + 1) + "-" + root.two(value.getDate())
+    }
+
+    function parsed(value) {
+        const result = new Date(value + "T00:00:00")
+        return isNaN(result.getTime()) ? new Date() : result
+    }
+
+    function headingFor(value) {
+        const day = root.parsed(value)
+        return (day.getMonth() + 1) + "月" + day.getDate() + "日"
+    }
+
+    function weekdayFor(value) {
+        const day = root.parsed(value)
+        return ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][day.getDay()]
+    }
+
+    function scheduleGeometrySave() {
+        if (!root.ready || root.visibility !== Window.Windowed)
+            return
+        saveGeometry.restart()
+    }
+
+    TaskManager {
+        id: taskManager
+    }
+
+    Shortcut {
+        sequence: "Ctrl+N"
+        onActivated: addDialog.openWith("")
+    }
+
+    Shortcut {
+        sequence: "Ctrl+W"
+        onActivated: Qt.quit()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Q"
+        onActivated: Qt.quit()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+,"
+        onActivated: themePicker.open()
+    }
+
     Connections {
         target: taskManager
 
         function onDateRollover() {
-
             root.todayDate = new Date()
-
-            timelineView.positionViewAtIndex(
-                6,
-                ListView.Contain
-            )
-
+            root.currentDate = root.todayKey
         }
     }
 
-    width: 320
-    height: 600
-    minimumWidth: 292
-    maximumWidth: 648
-    minimumHeight: 265
-    visible: true
-    title: qsTr("DailyUp")
-    flags: Qt.Window | Qt.FramelessWindowHint
-    color: "transparent"
+    function showThemePicker() {
+        themePicker.open()
+    }
 
-    Component.onCompleted: {
-        var today = new Date()
-        var dateString =
-                today.getFullYear() + "-" +
-                String(today.getMonth() + 1).padStart(2, "0") + "-" +
-                String(today.getDate()).padStart(2, "0")
+    function showAddDialog() {
+        addDialog.openWith("")
+    }
 
-        root.currentDate = dateString
-        taskManager.loadTasks(dateString)
-    }
+    function showEditDialog() {
+        if (taskManager.totalCount === 0)
+            return
+        root.editingIndex = 0
+        editDialog.openWith(taskManager.contentAt(0))
+    }
 
-    Rectangle {
-        id: mainPanel
-        anchors.fill: parent
-        color: "#F0F0F5"
-        radius: 24
-        clip: true
-        // 左上角圆弧按钮：点击打开数据库文件所在目录
-        Rectangle {
-            id: dbOpenButton
-            width: 26
-            height: 26
-            radius: 13
-            color: dbOpenHover.containsMouse ? "#37924B" : "#4CAF50"
-            anchors.top: parent.top
-            anchors.left: parent.left
-            z: 100
-            Text {
-                anchors.centerIn: parent
-                text: "\uD83D\uDCC1"
-                font.pixelSize: 11
-                color: "#FFFFFF"
-            }
-            MouseArea {
-                id: dbOpenHover
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: taskManager.openDatabaseFolder()
-            }
-        }
-// 独立定位在右上角外侧圆弧处的关闭按钮
-        Rectangle {
-            width: 26
-            height: 26
-            radius: 13
-            color: closeArea.containsMouse ? "#3A80D2" : "#4A90E2"
-            anchors.top: parent.top
-            anchors.right: parent.right
-            z: 100
+    Component.onCompleted: {
+        const now = new Date()
+        root.todayDate = now
+        root.currentDate = root.dateKey(now)
+        taskManager.loadTasks(root.currentDate)
 
-            Text {
-                anchors.centerIn: parent
-                text: "×"
-                font.pixelSize: 16
-                font.bold: true
-                color: "#FFFFFF"
-            }
+        const geometry = AppSettings.windowGeometry
+        if (geometry && geometry.width) {
+            root.width = Math.max(root.minimumWidth, Math.min(root.maximumWidth, geometry.width))
+            root.height = Math.max(root.minimumHeight, Math.min(root.maximumHeight, geometry.height))
+        }
+        root.ready = true
+    }
 
-            MouseArea {
-                id: closeArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: Qt.quit()
-            }
-        }
-// 独立定位在左下角外侧圆弧处的最小化按钮
-        Rectangle {
-            width: 26
-            height: 26
-            radius: 13
-            color: minArea.containsMouse ? "#E0A800" : "#FFC107"
-            anchors.bottom: parent.bottom
-            anchors.left: parent.left
-            z: 100
+    onWidthChanged: root.scheduleGeometrySave()
+    onHeightChanged: root.scheduleGeometrySave()
+    onClosing: AppSettings.saveWindowGeometry(root.width, root.height)
 
-            Text {
-                anchors.centerIn: parent
-                text: "-"
-                font.pixelSize: 18
-                font.bold: true
-                color: "#FFFFFF"
-            }
+    Timer {
+        id: saveGeometry
+        interval: 600
+        onTriggered: AppSettings.saveWindowGeometry(root.width, root.height)
+    }
 
-            MouseArea {
-                id: minArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: root.showMinimized()
-            }
-        }
-// 自定义窗口拖拽与边界回弹逻辑
-        MouseArea {
-        id: dragMouseArea
+    Rectangle {
+        id: panel
+
         anchors.fill: parent
-        acceptedButtons: Qt.LeftButton
-        property point startMousePos
-              onPressed: (mouse) => {
-                      startMousePos = Qt.point(mouse.x, mouse.y)             }
-             onPositionChanged: (mouse) => {
-                  if (pressed) {
-                        var dx = mouse.x - startMousePos.x
-                       var dy = mouse.y - startMousePos.y
-                         root.x += dx
-                    root.y += dy                 }
-          }
-         onReleased: {
-                var screenW = Screen.desktopAvailableWidth
-                var screenH = Screen.desktopAvailableHeight
-                    if (root.x < 0) {
-                        bounceX.to = 0
-                        bounceX.start()
-             }
-                    else if (root.x + root.width > screenW) {
-                        bounceX.to = screenW - root.width
-                        bounceX.start()                 }
-        if (root.y < 0) {                     bounceY.to = 0
-            bounceY.start()                 }
-        else if (root.y + root.height > screenH) {
-        bounceY.to = screenH - root.height
-        bounceY.start()                 }             }         }
-        NumberAnimation {
-            id: bounceX
-            target: root
-            property: "x"
-            duration: 250
-            easing.type: Easing.OutBack
-            easing.overshoot: 1.2         }
-        NumberAnimation {
-            id: bounceY
-            target: root
-            property: "y"
-            duration: 250
-            easing.type: Easing.OutBack
-            easing.overshoot: 1.2         }
-
-        // 垂直三区块布局
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 16
-            spacing: 12
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 58
-                color: "#FFFFFF"
-                radius: 16
-
-                ListView {
-                    id: timelineView
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    orientation: ListView.Horizontal
-                    clip: true
-                    model: 7
-                    spacing: 8
-                    currentIndex: 6
-
-                    onWidthChanged: {
-                        positionViewAtIndex(currentIndex, ListView.Contain)
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.NoButton
-                        onWheel: (wheel) => {
-                            var delta = wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : wheel.angleDelta.x
-                            if (delta > 0) {
-                                timelineView.flick(600, 0)
-                            } else {
-                                timelineView.flick(-600, 0)
-                            }
-                        }
-                    }
-
-                    delegate: Item {
-                        width: 76
-                        height: 42
-                        property bool isToday:
-                            databaseDateStr === Qt.formatDate(root.todayDate, "yyyy-MM-dd")
-                        property bool isSelected: timelineView.currentIndex === index
-
-                        property var targetDate: {
-                            var d = new Date(root.todayDate)
-                            d.setDate(
-                                d.getDate() - (6 - index)
-                            )
-                            return d
-                        }
-
-                        property string dayStr:
-                            [
-                                "周日",
-                                "周一",
-                                "周二",
-                                "周三",
-                                "周四",
-                                "周五",
-                                "周六"
-                            ][targetDate.getDay()]
-
-                        property string dateStr:
-                            (targetDate.getMonth() + 1) + "/" + targetDate.getDate()
-
-                        property string databaseDateStr:
-                            targetDate.getFullYear() + "-" +
-                            String(targetDate.getMonth() + 1).padStart(2, "0") + "-" +
-                            String(targetDate.getDate()).padStart(2, "0")
-
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: 12
-
-                            color:
-                                isSelected ?
-                                "#FFF176" :
-                                (isToday ? "#E1F5FE" : "#F7F7FA")
-
-                            Column {
-                                anchors.centerIn: parent
-                                spacing: 4
-
-                                Text {
-                                    text: dayStr
-                                    font.pixelSize: 15
-                                    font.bold: true
-                                }
-
-                                Text {
-                                    text: dateStr
-                                    font.pixelSize: 13
-                                    font.bold: true
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-
-                                onClicked: {
-                                    timelineView.currentIndex = index
-                                    root.currentDate = databaseDateStr
-                                    taskManager.loadTasks(databaseDateStr)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                color: "#FFFFFF"
-                radius: 16
-
-                // 空状态提示：当前日期还没有任务时展示（列表为空时 ListView 透明，不遮挡）
-                Text {
-                    visible: taskListView.count === 0
-                    anchors.centerIn: parent
-                    width: parent.width - 24
-                    text: "今日暂无任务\n点击下方 + Add New Task 添加"
-                    color: "#AAAAAA"
-                    font.pixelSize: 13
-                    horizontalAlignment: Text.AlignHCenter
-                    lineHeightMode: Text.FixedHeight
-                    lineHeight: 20
-                }
-
-                ListView {
-                    id: taskListView
-
-                    anchors.fill: parent
-                    anchors.margins: 10
-                    clip: true
-                    spacing: 6
-
-                    model: taskManager
-
-                    delegate: Item {
-                        width: taskListView.width
-                        height: 38
-
-                        required property int taskId
-                        required property string taskContent
-                        required property bool isCompleted
-                        required property bool isPinned
-                        required property int index
-
-
-                        Row {
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            height: 38
-
-                            Rectangle {
-                                width: 56
-                                height: 38
-                                radius: 8
-                                color: "#4A90E2"
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "置顶"
-                                    color: "#FFFFFF"
-                                    font.pixelSize: 12
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-
-                                    onClicked: {
-                                        taskManager.toggleTaskPin(index)
-                                        contentItem.x = 0
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                width: 56
-                                height: 38
-                                radius: 8
-                                color: "#FFF176"
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "编辑"
-                                    color: "#1A1A1A"
-                                    font.pixelSize: 12
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-
-                                    onClicked: {
-                                        editInput.text = taskContent
-                                        editIndex.value = index
-                                        editPopup.visible = true
-                                        editInput.forceActiveFocus()
-                                        contentItem.x = 0
-                                    }
-                                }
-                            }
-                        }
-
-
-                        Row {
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            height: 38
-
-                            Rectangle {
-                                width: 56
-                                height: 38
-                                radius: 8
-                                color: "#FF5252"
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "删除"
-                                    color: "#FFFFFF"
-                                    font.pixelSize: 12
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-
-                                    onClicked: {
-                                        taskManager.deleteTask(index)
-                                    }
-                                }
-                            }
-                        }
-
-
-                        Rectangle {
-                            id: contentItem
-
-                            width: parent.width
-                            height: 38
-
-                            radius: 8
-
-                            color:
-                                isCompleted ?
-                                "#FAFAFA" :
-                                "#F9F9FB"
-
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 10
-                                spacing: 10
-
-
-                                Rectangle {
-                                    Layout.preferredWidth: 18
-                                    Layout.preferredHeight: 18
-
-                                    radius: 4
-
-                                    color:
-                                        isCompleted ?
-                                        "#4A90E2" :
-                                        "transparent"
-
-                                    border.color:
-                                        isCompleted ?
-                                        "#4A90E2" :
-                                        "#CCCCCC"
-
-
-                                    Text {
-                                        anchors.centerIn: parent
-
-                                        text: "✓"
-
-                                        color: "#FFFFFF"
-
-                                        opacity:
-                                            isCompleted ? 1 : 0
-                                    }
-                                }
-
-
-                                Text {
-                                    Layout.fillWidth: true
-
-                                    text: taskContent
-
-                                    font.pixelSize: 13
-
-                                    color:
-                                        isCompleted ?
-                                        "#AAAAAA" :
-                                        "#333333"
-
-                                    font.strikeout:
-                                        isCompleted
-
-                                    elide:
-                                        Text.ElideRight
-                                }
-                            }
-
-
-                            DragHandler {
-                                id: dragHandler
-                                target: contentItem
-                                yAxis.enabled: false
-                                xAxis.minimum: -56
-                                xAxis.maximum: 112
-                                onActiveChanged: {
-                                    if (!active) {
-                                        var targetX = 0
-                                        if (contentItem.x < -28) {
-                                            targetX = -56
-                                        } else if (contentItem.x > 84) {
-                                            targetX = 112
-                                        } else if (contentItem.x > 28) {
-                                            targetX = 56
-                                        }
-
-                                        // 松手后平滑吸附到最近的挡位，而不是瞬间跳变
-                                        snapX.from = contentItem.x
-                                        snapX.to = targetX
-                                        snapX.start()
-                                    }
-                                }
-                            }
-                            NumberAnimation {
-                                id: snapX
-                                target: contentItem
-                                property: "x"
-                                duration: 200
-                                easing.type: Easing.OutCubic
-                            }
-
-
-                            TapHandler {
-
-                                onTapped: {
-
-                                    if (contentItem.x === 0) {
-                                        taskManager.toggleTaskStatus(index)
-                                    }
-                                    else {
-                                        contentItem.x = 0
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-
-            Rectangle {
-                id: bottomTaskBlock
-                Layout.fillWidth: true
-                Layout.preferredHeight: 44
-                color: "#FFFFFF"
-                radius: 16
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "+ Add New Task"
-                    font.pixelSize: 15
-                    color: "#4A90E2"
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: {
-                        addPopup.visible = true
-                        newTaskInput.text = ""
-                        newTaskInput.forceActiveFocus()
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            id: addPopup
-            visible: false
-            width: Math.min(270, root.width - 32)
-            height: addLayout.implicitHeight + 32
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.verticalCenterOffset: 25
-
-            color: "#FFFFFF"
-            radius: 20
-            border.color: "#E1E1E6"
-            border.width: 1
-
-            ColumnLayout {
-                id: addLayout
-                anchors.fill: parent
-                anchors.margins: 16
-                spacing: 12
-
-                Text {
-                    text: "添加新任务"
-                    font.bold: true
-                    font.pixelSize: 14
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 38
-                    color: "#F7F7FA"
-                    radius: 10
-
-                    TextInput {
-                        id: newTaskInput
-                        anchors.fill: parent
-                        anchors.leftMargin: 10
-                        anchors.rightMargin: 10
-                        verticalAlignment: TextInput.AlignVCenter
-                        font.pixelSize: 13
-                        onAccepted: {
-                            var text = newTaskInput.text.trim()
-                            if (text !== "") {
-                                taskManager.addTask(root.currentDate, text)
-                                addPopup.visible = false
-                            }
-                        }
-                    }
-                }
-                RowLayout {
-                    Layout.alignment: Qt.AlignRight
-                    spacing: 8
-                    Rectangle {
-                        width: 60
-                        height: 28
-                        radius: 8
-                        color: "#EFEFF4"
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "取消"
-                            font.pixelSize: 12
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-
-                            onClicked: {
-                                addPopup.visible = false
-                            }
-                        }
-                    }
-
-
-                    Rectangle {
-                        width: 60
-                        height: 28
-                        radius: 8
-                        color: "#4A90E2"
-                        Text {
-                            anchors.centerIn: parent
-                            text: "确定"
-                            color: "#FFFFFF"
-                            font.pixelSize: 12
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: {
-                                var text =
-                                        newTaskInput.text.trim()
-
-                                if (text !== "") {
-
-                                    taskManager.addTask(
-                                        root.currentDate,
-                                        text
-                                    )
-
-                                    addPopup.visible = false
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-
-        QtObject {
-            id: editIndex
-            property int value: 0
-        }
-
-
-        Rectangle {
-            id: editPopup
-            visible: false
-            width: Math.min(
-                       270,
-                       root.width - 32
-                   )
-            height:
-                editLayout.implicitHeight + 32
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.verticalCenterOffset: 25
-
-            color: "#FFFFFF"
-            radius: 20
-            border.color: "#E1E1E6"
-            border.width: 1
-
-            ColumnLayout {
-                id: editLayout
-                anchors.fill: parent
-                anchors.margins: 16
-                spacing: 12
-                Text {
-                    text: "修改任务"
-                    font.bold: true
-                    font.pixelSize: 14
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 38
-                    color: "#F7F7FA"
-                    radius: 10
-
-                    TextInput {
-                        id: editInput
-                        anchors.fill: parent
-                        anchors.leftMargin: 10
-                        anchors.rightMargin: 10
-                        verticalAlignment: TextInput.AlignVCenter
-                        font.pixelSize: 13
-                        onAccepted: {
-                            var text = editInput.text.trim()
-                            if (text !== "") {
-                                taskManager.updateTaskContent(editIndex.value, text)
-                                editPopup.visible = false
-                            }
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.alignment:
-                        Qt.AlignRight
-                    spacing: 8
-                    Rectangle {
-                        width: 60
-                        height: 28
-                        radius: 8
-                        color: "#EFEFF4"
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "取消"
-                            font.pixelSize: 12
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: {
-                                editPopup.visible = false
-                            }
-                        }
-                    }
-
-
-                    Rectangle {
-                        width: 60
-                        height: 28
-                        radius: 8
-                        color: "#4A90E2"
-                        Text {
-                            anchors.centerIn: parent
-                            text: "确定"
-                            color: "#FFFFFF"
-                            font.pixelSize: 12
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: {
-                                var text =
-                                        editInput.text.trim()
-                                if (text !== "") {
-                                    taskManager.updateTaskContent(
-                                        editIndex.value,
-                                        text
-                                    )
-                                    editPopup.visible = false
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-
-        MouseArea {
-            width: 20
-            height: 20
-            anchors.bottom: parent.bottom
-            anchors.right: parent.right
-            cursorShape:
-                Qt.SizeFDiagCursor
-
-            onPressed: {
-                root.startSystemResize(
-                    Qt.RightEdge |
-                    Qt.BottomEdge
-                )
-            }
-        }
-    }
+        radius: Theme.windowRadius
+        clip: true
+        opacity: 0
+
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Theme.bgTop }
+            GradientStop { position: 1.0; color: Theme.bgBottom }
+        }
+
+        Behavior on opacity { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+
+        Component.onCompleted: panel.opacity = 1
+
+        // 顶部一层极淡的强调色，让背景不至于太平
+        Rectangle {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 220
+            radius: Theme.windowRadius
+            color: "transparent"
+
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Theme.alpha(Theme.accent, 0.09) }
+                GradientStop { position: 1.0; color: Theme.alpha(Theme.accent, 0.0) }
+            }
+        }
+
+        // 顶部 1px 高光，模拟 macOS 玻璃边缘
+        Rectangle {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: Theme.windowRadius
+            anchors.rightMargin: Theme.windowRadius
+            height: 1
+            color: Qt.rgba(1, 1, 1, 0.65)
+        }
+
+        // 空白标题栏可拖动窗口
+        MouseArea {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 40
+            acceptedButtons: Qt.LeftButton
+            onPressed: root.startSystemMove()
+        }
+
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: 15
+            text: "DailyUp"
+            font.pixelSize: 11
+            font.weight: Font.Medium
+            font.letterSpacing: 0.6
+            color: Theme.faint
+        }
+
+        WindowControls {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.leftMargin: 16
+            anchors.topMargin: 15
+            win: root
+        }
+
+        Row {
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.rightMargin: 12
+            anchors.topMargin: 10
+            spacing: 2
+
+            Item {
+                width: 28
+                height: 28
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 14
+                    color: themeButtonHover.hovered ? Theme.alpha(Theme.accent, 0.12) : Theme.alpha(Theme.accent, 0)
+                    Behavior on color { ColorAnimation { duration: 120 } }
+                }
+
+                Rectangle {
+                    width: 12
+                    height: 12
+                    radius: 6
+                    anchors.centerIn: parent
+                    color: Theme.accent
+                    border.width: 1.5
+                    border.color: Qt.rgba(1, 1, 1, 0.75)
+                }
+
+                HoverHandler {
+                    id: themeButtonHover
+                    cursorShape: Qt.PointingHandCursor
+                }
+
+                ToolTip.visible: themeButtonHover.hovered
+                ToolTip.delay: 500
+                ToolTip.text: "切换主题"
+
+                TapHandler {
+                    onTapped: themePicker.opened ? themePicker.close() : themePicker.open()
+                }
+            }
+
+            Item {
+                width: 28
+                height: 28
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 14
+                    color: folderButtonHover.hovered ? Theme.alpha(Theme.ink, 0.07) : Theme.alpha(Theme.ink, 0)
+                    Behavior on color { ColorAnimation { duration: 120 } }
+                }
+
+                Item {
+                    width: 15
+                    height: 13
+                    anchors.centerIn: parent
+
+                    Rectangle {
+                        x: 0
+                        y: 3
+                        width: 15
+                        height: 10
+                        radius: 2.5
+                        color: folderButtonHover.hovered ? Theme.accent : Theme.alpha(Theme.ink, 0.48)
+                    }
+
+                    Rectangle {
+                        x: 1
+                        y: 0
+                        width: 7
+                        height: 5
+                        radius: 1.5
+                        color: folderButtonHover.hovered ? Theme.accent : Theme.alpha(Theme.ink, 0.48)
+                    }
+                }
+
+                HoverHandler {
+                    id: folderButtonHover
+                    cursorShape: Qt.PointingHandCursor
+                }
+
+                ToolTip.visible: folderButtonHover.hovered
+                ToolTip.delay: 500
+                ToolTip.text: "打开数据目录"
+
+                TapHandler {
+                    onTapped: taskManager.openDatabaseFolder()
+                }
+            }
+        }
+
+        Text {
+            id: dateLabel
+
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.leftMargin: 18
+            anchors.topMargin: 43
+
+            text: root.dateHeading
+            font.pixelSize: 22
+            font.weight: Font.DemiBold
+            color: Theme.ink
+        }
+
+        Text {
+            id: weekdayLabel
+
+            anchors.left: dateLabel.right
+            anchors.leftMargin: 8
+            anchors.baseline: dateLabel.baseline
+
+            text: root.dateWeekday
+            font.pixelSize: 12
+            color: Theme.inkSecondary
+        }
+
+        Rectangle {
+            visible: root.viewingToday
+
+            anchors.left: weekdayLabel.right
+            anchors.leftMargin: 8
+            anchors.verticalCenter: weekdayLabel.verticalCenter
+
+            width: 34
+            height: 18
+            radius: 9
+            color: Theme.accentSoft
+
+            Text {
+                anchors.centerIn: parent
+                text: "今天"
+                font.pixelSize: 10
+                font.weight: Font.Medium
+                color: Theme.accent
+            }
+        }
+
+        Text {
+            anchors.right: parent.right
+            anchors.rightMargin: 18
+            anchors.baseline: dateLabel.baseline
+
+            visible: taskManager.totalCount > 0
+            text: taskManager.completedCount + " / " + taskManager.totalCount
+            font.pixelSize: 12
+            font.weight: Font.Medium
+            color: Theme.inkSecondary
+        }
+
+        Rectangle {
+            id: progressTrack
+
+            anchors.top: dateLabel.bottom
+            anchors.topMargin: 8
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 18
+            anchors.rightMargin: 18
+
+            height: 3
+            radius: 1.5
+            color: Theme.track
+
+            Rectangle {
+                width: parent.width * root.completionRatio
+                height: parent.height
+                radius: 1.5
+                color: Theme.accent
+                Behavior on width { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+            }
+        }
+
+        DateStrip {
+            id: dateStrip
+
+            anchors.top: progressTrack.bottom
+            anchors.topMargin: 10
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 18
+            anchors.rightMargin: 18
+            height: 56
+
+            today: root.todayDate
+            selectedDate: root.currentDate
+
+            onDateSelected: (dateStr) => {
+                root.currentDate = dateStr
+                taskManager.loadTasks(dateStr)
+            }
+        }
+
+        Rectangle {
+            id: taskCard
+
+            anchors.top: dateStrip.bottom
+            anchors.topMargin: 10
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 18
+            anchors.rightMargin: 18
+            anchors.bottom: addButton.top
+            anchors.bottomMargin: 10
+
+            radius: Theme.cardRadius
+            color: Theme.card
+            border.width: 1
+            border.color: Theme.cardBorder
+
+            ListView {
+                id: taskList
+
+                anchors.fill: parent
+                anchors.margins: 8
+                anchors.bottomMargin: taskCard.height > 270 ? 30 : 12
+                clip: true
+                spacing: 4
+                model: taskManager
+
+                delegate: TaskRow {
+                    width: taskList.width
+                    manager: taskManager
+
+                    onEditRequested: (index, content) => {
+                        root.editingIndex = index
+                        editDialog.openWith(content)
+                    }
+                }
+
+                add: Transition {
+                    NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 180 }
+                }
+
+                displaced: Transition {
+                    NumberAnimation { property: "y"; duration: 180; easing.type: Easing.OutCubic }
+                }
+            }
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 9
+                visible: taskManager.totalCount > 0 && taskCard.height > 270
+                text: "左滑删除 · 右滑置顶 / 编辑"
+                font.pixelSize: 10
+                color: Theme.faint
+            }
+
+            Column {
+                visible: taskManager.totalCount === 0
+                anchors.centerIn: parent
+                spacing: 9
+
+                Rectangle {
+                    width: 52
+                    height: 52
+                    radius: 26
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    color: Theme.alpha(Theme.accent, 0.10)
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "✓"
+                        font.pixelSize: 22
+                        font.bold: true
+                        color: Theme.accent
+                    }
+                }
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "今天还没有任务"
+                    font.pixelSize: 13
+                    font.weight: Font.Medium
+                    color: Theme.inkSecondary
+                }
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "写下今天的第一件小事"
+                    font.pixelSize: 12
+                    color: Theme.faint
+                }
+            }
+        }
+
+        Rectangle {
+            id: addShadow
+
+            anchors.left: addButton.left
+            anchors.right: addButton.right
+            anchors.top: addButton.top
+            anchors.topMargin: 4
+            height: addButton.height
+
+            radius: addButton.radius
+            color: Theme.alpha(Theme.accentDeep, 0.18)
+        }
+
+        Rectangle {
+            id: addButton
+
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 18
+            anchors.rightMargin: 18
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 16
+
+            height: 46
+            radius: 14
+
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Theme.accent }
+                GradientStop { position: 1.0; color: Theme.accentDeep }
+            }
+
+            scale: addMouse.pressed ? 0.985 : 1
+            Behavior on scale { NumberAnimation { duration: 90 } }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 14
+                color: "#FFFFFF"
+                opacity: addMouse.containsMouse ? 0.10 : 0
+                Behavior on opacity { NumberAnimation { duration: 120 } }
+            }
+
+            Row {
+                anchors.centerIn: parent
+                spacing: 7
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "+"
+                    font.pixelSize: 18
+                    font.weight: Font.Medium
+                    color: Theme.accentContrast
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "新建任务"
+                    font.pixelSize: 14
+                    font.weight: Font.DemiBold
+                    color: Theme.accentContrast
+                }
+            }
+
+            MouseArea {
+                id: addMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: addDialog.openWith("")
+            }
+        }
+
+        // 边缘 / 角落拖拽调整大小（无边框窗口在 macOS 上没有系统缩放边）
+        MouseArea {
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.topMargin: 42
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 18
+            width: 5
+            cursorShape: Qt.SizeHorCursor
+
+            property real startWidth: 0
+            property real startSceneX: 0
+
+            onPressed: (mouse) => {
+                startWidth = root.width
+                startSceneX = mouse.scenePosition.x
+            }
+
+            onPositionChanged: (mouse) => {
+                if (!pressed)
+                    return
+                root.width = Math.max(root.minimumWidth,
+                                      Math.min(root.maximumWidth,
+                                               startWidth + mouse.scenePosition.x - startSceneX))
+            }
+        }
+
+        MouseArea {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.rightMargin: 18
+            anchors.bottom: parent.bottom
+            height: 5
+            cursorShape: Qt.SizeVerCursor
+
+            property real startHeight: 0
+            property real startSceneY: 0
+
+            onPressed: (mouse) => {
+                startHeight = root.height
+                startSceneY = mouse.scenePosition.y
+            }
+
+            onPositionChanged: (mouse) => {
+                if (!pressed)
+                    return
+                root.height = Math.max(root.minimumHeight,
+                                       Math.min(root.maximumHeight,
+                                                startHeight + mouse.scenePosition.y - startSceneY))
+            }
+        }
+
+        MouseArea {
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            width: 18
+            height: 18
+            cursorShape: Qt.SizeFDiagCursor
+
+            property real startWidth: 0
+            property real startHeight: 0
+            property real startSceneX: 0
+            property real startSceneY: 0
+
+            onPressed: (mouse) => {
+                startWidth = root.width
+                startHeight = root.height
+                startSceneX = mouse.scenePosition.x
+                startSceneY = mouse.scenePosition.y
+            }
+
+            onPositionChanged: (mouse) => {
+                if (!pressed)
+                    return
+                root.width = Math.max(root.minimumWidth,
+                                      Math.min(root.maximumWidth,
+                                               startWidth + mouse.scenePosition.x - startSceneX))
+                root.height = Math.max(root.minimumHeight,
+                                       Math.min(root.maximumHeight,
+                                                startHeight + mouse.scenePosition.y - startSceneY))
+            }
+        }
+
+        Rectangle {
+            id: dialogDim
+
+            anchors.fill: parent
+            radius: Theme.windowRadius
+            color: Qt.rgba(0.06, 0.08, 0.12, 0.12)
+            opacity: (addDialog.opened || editDialog.opened) ? 1 : 0
+            visible: opacity > 0
+            Behavior on opacity { NumberAnimation { duration: 170 } }
+        }
+
+        Rectangle {
+            id: toast
+
+            property string message: ""
+
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: addButton.top
+            anchors.bottomMargin: 14
+            width: Math.min(310, parent.width - 48)
+            height: 32
+            radius: 16
+            color: Qt.rgba(0.12, 0.12, 0.14, 0.92)
+            opacity: 0
+            visible: opacity > 0
+            z: 180
+
+            Behavior on opacity { NumberAnimation { duration: 160 } }
+
+            Text {
+                anchors.fill: parent
+                anchors.leftMargin: 14
+                anchors.rightMargin: 14
+                verticalAlignment: Text.AlignVCenter
+                horizontalAlignment: Text.AlignHCenter
+                text: toast.message
+                color: "#FFFFFF"
+                font.pixelSize: 11
+                elide: Text.ElideRight
+            }
+
+            Timer {
+                id: toastTimer
+                interval: 2600
+                onTriggered: toast.opacity = 0
+            }
+
+            function show(text) {
+                message = text
+                opacity = 1
+                toastTimer.restart()
+            }
+        }
+
+        Connections {
+            target: taskManager
+
+            function onErrorOccurred(message) {
+                toast.show(message)
+            }
+        }
+
+        TaskDialog {
+            id: addDialog
+            heading: "新建任务"
+            confirmLabel: "添加"
+            onAccepted: (text) => taskManager.addTask(root.currentDate, text)
+        }
+
+        TaskDialog {
+            id: editDialog
+            heading: "编辑任务"
+            confirmLabel: "保存"
+            onAccepted: (text) => taskManager.updateTaskContent(root.editingIndex, text)
+        }
+
+        ThemePicker {
+            id: themePicker
+        }
+    }
 }

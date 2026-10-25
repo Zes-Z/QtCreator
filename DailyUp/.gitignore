@@ -32,6 +32,7 @@ qrc_*.cpp
 Thumbs.db
 *.res
 *.rc
+!app.rc
 /.qmake.cache
 /.qmake.stash
 **/.qmlls.ini
@@ -82,3 +83,8 @@ CMakeLists.txt.user*
 .uic/
 /build*/
 /.qtcreator/
+# macOS build output
+/build*/
+/dist/
+/assets/DailyUp.iconset/
+*.dmg

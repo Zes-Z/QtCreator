@@ -8,6 +8,106 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QFileInfo>
+#include <QFile>
+
+#ifdef Q_OS_MACOS
+#include <sys/xattr.h>
+#endif
+
+namespace {
+
+// 数据文件可能从只读位置复制过来（模式 444），或被 Gatekeeper 打上隔离属性。
+// SQLite 打不开写事务时任务会"保存了但没出现"，所以启动前主动修复。
+void repairWritableFile(const QString &path)
+{
+    QFile file(path);
+    if (!file.exists())
+        return;
+
+    const QFile::Permissions perms = file.permissions();
+    if (!(perms & QFileDevice::WriteOwner)) {
+        const QFile::Permissions updated =
+            perms | QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+        if (file.setPermissions(updated))
+            qInfo() << "Restored write permission:" << path;
+        else
+            qWarning() << "Could not restore write permission:" << path;
+    }
+
+#ifdef Q_OS_MACOS
+    const QByteArray nativePath = QFile::encodeName(path);
+    removexattr(nativePath.constData(), "com.apple.quarantine", 0);
+#endif
+}
+
+void ensureDatabaseWritable(const QString &dataDir, const QString &dbPath)
+{
+    QFile directory(dataDir);
+    if (directory.exists()) {
+        const QFile::Permissions perms = directory.permissions();
+        if (!(perms & QFileDevice::WriteOwner)) {
+            directory.setPermissions(perms
+                                     | QFileDevice::ReadOwner
+                                     | QFileDevice::WriteOwner
+                                     | QFileDevice::ExeOwner);
+        }
+    }
+
+    repairWritableFile(dbPath);
+    repairWritableFile(dbPath + QStringLiteral("-wal"));
+    repairWritableFile(dbPath + QStringLiteral("-shm"));
+}
+
+// 1.0 之前可执行文件名为 appDailyUp，数据目录也随之不同。
+// 首次启动新版本时把旧库复制过来，避免用户看不到历史打卡。
+void migrateLegacyDatabase(const QString &dataDir, const QString &dbPath)
+{
+    if (QFileInfo::exists(dbPath))
+        return;
+
+    const QFileInfo dirInfo(dataDir);
+    if (dirInfo.fileName() != QStringLiteral("DailyUp"))
+        return;
+
+    // Qt 的 AppDataLocation 在 macOS 上包含组织名：
+    //   ~/Library/Application Support/Zes/DailyUp
+    // 旧版本（可执行文件 appDailyUp）没有组织目录，可能在上一级或再上一级。
+    const QDir appDir = dirInfo.dir();
+    const QDir parentDir(QDir::cleanPath(appDir.absolutePath() + QStringLiteral("/..")));
+    const QStringList legacyDirs = {
+        appDir.filePath(QStringLiteral("appDailyUp")),
+        parentDir.filePath(QStringLiteral("appDailyUp")),
+        parentDir.filePath(QStringLiteral("DailyUp"))
+    };
+
+    QString legacyDir;
+    QString legacyDb;
+    for (const QString &candidate : legacyDirs) {
+        if (QDir::cleanPath(candidate) == QDir::cleanPath(dataDir))
+            continue;
+        const QString candidateDb = QDir(candidate).filePath(QStringLiteral("dailyup.db"));
+        if (QFileInfo::exists(candidateDb)) {
+            legacyDir = candidate;
+            legacyDb = candidateDb;
+            break;
+        }
+    }
+    if (legacyDir.isEmpty())
+        return;
+
+    QDir().mkpath(dataDir);
+    if (!QFile::copy(legacyDb, dbPath)) {
+        qWarning() << "Failed to migrate legacy database from" << legacyDb;
+        return;
+    }
+    for (const QString &suffix : { QStringLiteral("-wal"), QStringLiteral("-shm") }) {
+        const QString source = legacyDb + suffix;
+        if (QFileInfo::exists(source))
+            QFile::copy(source, dbPath + suffix);
+    }
+    qInfo() << "Migrated legacy database from" << legacyDb << "to" << dbPath;
+}
+} // namespace
 
 DatabaseManager& DatabaseManager::instance() {
     static DatabaseManager instance;
@@ -31,15 +131,21 @@ bool DatabaseManager::initDatabase() {
         m_db = QSqlDatabase::addDatabase("QSQLITE");
     }
 
-    // 获取系统标准应用数据目录 (跨平台支持：Windows/macOS/Linux)
-    QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    // 系统标准应用数据目录（macOS: ~/Library/Application Support/Zes/DailyUp）
+    // DAILYUP_DATA_DIR 仅用于开发 / 截图 / 自测时隔离数据。
+    QString dataDir = qEnvironmentVariable("DAILYUP_DATA_DIR");
+    if (dataDir.isEmpty()) {
+        dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    }
     QDir dir(dataDir);
     if (!dir.exists()) {
         dir.mkpath(".");
     }
 
     // 设置数据库文件路径
-    QString dbPath = dataDir + "/dailyup.db";
+    const QString dbPath = dir.filePath(QStringLiteral("dailyup.db"));
+    migrateLegacyDatabase(dataDir, dbPath);
+    ensureDatabaseWritable(dataDir, dbPath);
     m_db.setDatabaseName(dbPath);
 
     if (!m_db.open()) {
@@ -54,6 +160,17 @@ bool DatabaseManager::initDatabase() {
         QSqlQuery pragma(m_db);
         pragma.exec("PRAGMA journal_mode = WAL");
         pragma.exec("PRAGMA synchronous = NORMAL");
+        pragma.exec("PRAGMA busy_timeout = 3000");
+    }
+
+    // 明确探测一次写事务；失败时继续以只读方式运行，并在用户保存任务时提示。
+    {
+        QSqlQuery writable(m_db);
+        if (writable.exec(QStringLiteral("BEGIN IMMEDIATE"))) {
+            writable.exec(QStringLiteral("ROLLBACK"));
+        } else {
+            qWarning() << "Database is not writable:" << writable.lastError().text();
+        }
     }
 
     // 创建 Tasks 表
@@ -200,12 +317,12 @@ bool DatabaseManager::rolloverTasksForToday() {
         return false;
     }
 
-    // 3. 核心逻辑：将最近一天的任务复制到今天！
-    // 强制把 is_completed 设为 0。is_pinned (置顶状态) 我们让它继承昨天的设置。
+    // 3. 核心逻辑：只继承任务内容，不继承任何状态。
+    // 完成与置顶都从 0 开始，新的一天是一张干净清单。
     QSqlQuery copyQuery;
     copyQuery.prepare(R"(
         INSERT INTO Tasks (date, content, is_completed, is_pinned)
-        SELECT :today, content, 0, is_pinned
+        SELECT :today, content, 0, 0
         FROM Tasks
         WHERE date = :lastDate
     )");

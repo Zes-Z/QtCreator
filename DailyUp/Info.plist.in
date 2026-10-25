@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>@APP_BUNDLE_DEVELOPMENT_REGION@</string>
+    <key>CFBundleExecutable</key>
+    <string>@APP_BUNDLE_EXECUTABLE@</string>
+    <key>CFBundleIdentifier</key>
+    <string>@APP_BUNDLE_IDENTIFIER@</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>@APP_BUNDLE_NAME@</string>
+    <key>CFBundleDisplayName</key>
+    <string>@APP_BUNDLE_NAME@</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>@APP_BUNDLE_ICON@</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@APP_BUNDLE_SHORT_VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@APP_BUNDLE_VERSION@</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>@APP_BUNDLE_MIN_MACOS@</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>@APP_BUNDLE_COPYRIGHT@</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSRequiresAquaSystemAppearance</key>
+    <false/>
+</dict>
+</plist>

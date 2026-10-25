@@ -49,6 +49,16 @@ void TaskManager::checkDateRollover() {
 }
 
 
+int TaskManager::completedCount() const {
+    int completed = 0;
+    for (const TaskData &task : m_tasks) {
+        if (task.isCompleted)
+            ++completed;
+    }
+    return completed;
+}
+
+
 int TaskManager::rowCount(const QModelIndex &parent) const {
     if (parent.isValid()) return 0;
     return m_tasks.count();
@@ -131,6 +141,7 @@ void TaskManager::loadTasks(const QString &date) {
 
     // 通知 QML 模型重置完毕，自动渲染该日期的专属任务
     endResetModel();
+    emit countsChanged();
 }
 
 
@@ -145,14 +156,14 @@ void TaskManager::addTask(const QString &date, const QString &content) {
         return;
 
 
-    if (DatabaseManager::instance().addTask(targetDate, content)) {
-
-        // 如果当前正好在看这个日期，则直接刷新列表
-        if (targetDate == m_currentDate) {
-
-            loadTasks(m_currentDate);
-        }
+    if (!DatabaseManager::instance().addTask(targetDate, content)) {
+        emit errorOccurred(QStringLiteral("任务没有保存：数据库不可写。"));
+        return;
     }
+
+    // 如果当前正好在看这个日期，则直接刷新列表
+    if (targetDate == m_currentDate)
+        loadTasks(m_currentDate);
 }
 
 
@@ -169,21 +180,22 @@ void TaskManager::toggleTaskStatus(int index) {
         !task.isCompleted;
 
 
-    if (DatabaseManager::instance().updateTaskStatus(task.id, newStatus)) {
-
-        task.isCompleted = newStatus;
-
-
-        QModelIndex modelIndex =
-            createIndex(index, 0);
-
-
-        emit dataChanged(
-            modelIndex,
-            modelIndex,
-            {IsCompletedRole}
-            );
+    if (!DatabaseManager::instance().updateTaskStatus(task.id, newStatus)) {
+        emit errorOccurred(QStringLiteral("状态没有保存：数据库不可写。"));
+        return;
     }
+
+    task.isCompleted = newStatus;
+
+    QModelIndex modelIndex =
+        createIndex(index, 0);
+
+    emit dataChanged(
+        modelIndex,
+        modelIndex,
+        {IsCompletedRole}
+        );
+    emit countsChanged();
 }
 
 
@@ -198,20 +210,21 @@ void TaskManager::deleteTask(int index) {
         m_tasks[index].id;
 
 
-    if (DatabaseManager::instance().deleteTask(taskId)) {
-
-        beginRemoveRows(
-            QModelIndex(),
-            index,
-            index
-            );
-
-
-        m_tasks.removeAt(index);
-
-
-        endRemoveRows();
+    if (!DatabaseManager::instance().deleteTask(taskId)) {
+        emit errorOccurred(QStringLiteral("任务没有删除：数据库不可写。"));
+        return;
     }
+
+    beginRemoveRows(
+        QModelIndex(),
+        index,
+        index
+        );
+
+    m_tasks.removeAt(index);
+
+    endRemoveRows();
+    emit countsChanged();
 }
 
 
@@ -228,21 +241,21 @@ void TaskManager::updateTaskContent(int index, const QString &content) {
         m_tasks[index];
 
 
-    if (DatabaseManager::instance().updateTaskContent(task.id, content)) {
-
-        task.content = content;
-
-
-        QModelIndex modelIndex =
-            createIndex(index, 0);
-
-
-        emit dataChanged(
-            modelIndex,
-            modelIndex,
-            {ContentRole}
-            );
+    if (!DatabaseManager::instance().updateTaskContent(task.id, content)) {
+        emit errorOccurred(QStringLiteral("修改没有保存：数据库不可写。"));
+        return;
     }
+
+    task.content = content;
+
+    QModelIndex modelIndex =
+        createIndex(index, 0);
+
+    emit dataChanged(
+        modelIndex,
+        modelIndex,
+        {ContentRole}
+        );
 }
 
 
@@ -261,11 +274,19 @@ void TaskManager::toggleTaskPin(int index) {
         !task.isPinned;
 
 
-    if (DatabaseManager::instance().toggleTaskPin(task.id, newPinStatus)) {
-
-        // 置顶状态改变后，由于排序会变，重新加载当前日期任务
-        loadTasks(m_currentDate);
+    if (!DatabaseManager::instance().toggleTaskPin(task.id, newPinStatus)) {
+        emit errorOccurred(QStringLiteral("置顶没有保存：数据库不可写。"));
+        return;
     }
+
+    // 置顶状态改变后，由于排序会变，重新加载当前日期任务
+    loadTasks(m_currentDate);
+}
+
+QString TaskManager::contentAt(int index) const {
+    if (index < 0 || index >= m_tasks.size())
+        return {};
+    return m_tasks.at(index).content;
 }
 
 // 打开数据库文件所在目录（供 QML 按钮调用）

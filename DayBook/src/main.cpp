@@ -244,7 +244,7 @@ int main(int argc, char *argv[])
         if (parts.size() == 2) {
             const int width = parts.at(0).toInt();
             const int height = parts.at(1).toInt();
-            if (width > 800 && height > 600)
+            if (width >= 800 && height >= 600)
                 window->resize(width, height);
         }
     }

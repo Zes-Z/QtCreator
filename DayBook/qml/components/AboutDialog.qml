@@ -49,15 +49,14 @@ Popup {
 
         Row {
             spacing: 12
-            Rectangle {
+            Image {
                 width: 48
                 height: 48
-                radius: 15
-                gradient: Gradient {
-                    GradientStop { position: 0; color: Theme.accent }
-                    GradientStop { position: 1; color: Theme.accentDeep }
-                }
-                Icon { anchors.centerIn: parent; name: "auto_stories"; size: 26; iconColor: "#FFF9F0" }
+                source: "qrc:/assets/appicon.png"
+                sourceSize.width: 96
+                sourceSize.height: 96
+                fillMode: Image.PreserveAspectFit
+                smooth: true
             }
             Column {
                 anchors.verticalCenter: parent.verticalCenter

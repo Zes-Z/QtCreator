@@ -157,6 +157,7 @@ public:
 
 public slots:
     void reload();
+    void moveAccountRow(int from, int to);
 signals:
     void countChanged();
     void summaryChanged();

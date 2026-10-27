@@ -88,6 +88,7 @@ Item {
             budgetFlipped = true
         else if (App.startupModal === "period")
             periodFlipped = true
+
     }
 
     function trendMonths() {
@@ -186,19 +187,19 @@ Item {
         id: flick
         anchors.fill: parent
         contentWidth: width
-        contentHeight: content.height + 20
+        contentHeight: Math.max(flick.height, content.implicitHeight)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
         Column {
             id: content
             width: flick.width
-            y: 2
-            spacing: 15
+            y: 0
+            spacing: 12
 
             Item {
                 width: parent.width
-                height: 58
+                height: 50
                 Column {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
@@ -224,69 +225,18 @@ Item {
                 }
             }
 
-            Row {
+            MonthlyStatRow {
                 width: parent.width
-                height: 98
-                spacing: 15
-                StatCard {
-                    width: (parent.width - 45) / 4
-                    height: 98
-                    shadow: false
-                    footerBelowValue: true
-                    title: "本月支出"
-                    icon: "receipt_long"
-                    iconColor: Theme.expense
-                    value: App.monthExpense
-                    footer: App.monthTransactionCount + " 笔记录"
-                    deltaText: App.lastMonthExpense > 0 ? App.percentLabel(App.expenseChange) : ""
-                    deltaTone: App.expenseChange > 0 ? "bad" : "good"
-                    deltaArrow: App.expenseChange > 0 ? "arrow_upward" : "arrow_downward"
-                }
-                StatCard {
-                    width: (parent.width - 45) / 4
-                    height: 98
-                    shadow: false
-                    footerBelowValue: true
-                    title: "本月收入"
-                    icon: "payments"
-                    iconColor: Theme.income
-                    value: App.monthIncome
-                    footer: "工资与副业"
-                    deltaText: App.lastMonthIncome > 0 ? App.percentLabel(App.incomeChange) : ""
-                    deltaTone: App.incomeChange >= 0 ? "good" : "bad"
-                    deltaArrow: App.incomeChange >= 0 ? "arrow_upward" : "arrow_downward"
-                }
-                StatCard {
-                    width: (parent.width - 45) / 4
-                    height: 98
-                    shadow: false
-                    footerBelowValue: true
-                    title: "本月结余"
-                    icon: "savings"
-                    iconColor: Theme.accent
-                    value: App.monthBalance
-                    footer: "储蓄率 " + page.savingsRate() + "%"
-                }
-                StatCard {
-                    width: (parent.width - 45) / 4
-                    height: 98
-                    shadow: false
-                    footerBelowValue: true
-                    title: "日均支出"
-                    icon: "schedule"
-                    iconColor: Theme.warning
-                    value: App.dailyAverage
-                    footer: "每笔平均 " + App.money(App.monthTransactionCount > 0 ? App.monthExpense / App.monthTransactionCount : 0)
-                }
+                cardHeight: 98
             }
 
             Row {
                 width: parent.width
-                height: 330
-                spacing: 15
+                height: 318
+                spacing: 12
 
                 GlassCard {
-                    width: parent.width - 315
+                    width: parent.width - 312
                     height: parent.height
                     radius: 20
                     shadow: false
@@ -309,13 +259,6 @@ Item {
                                     font.family: Theme.fontFamily
                                     font.pixelSize: 13
                                     font.weight: 600
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Text {
-                                    text: page.trendSubtitle()
-                                    color: Theme.faint
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: 9
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
@@ -375,12 +318,10 @@ Item {
 
                         DonutChart {
                             visible: page.compositionSegments.length > 0
-                            width: 148
-                            height: 148
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.top: parent.top
-                            anchors.topMargin: 6
-                            thickness: 16
+                            width: 176
+                            height: 176
+                            anchors.centerIn: parent
+                            thickness: 18
                             segments: page.compositionSegments
                             centerLabel: page.compositionHoverIndex >= 0 && page.compositionHoverIndex < page.compositionSegments.length
                                           ? page.compositionSegments[page.compositionHoverIndex].name : page.compositionLabel()
@@ -390,51 +331,6 @@ Item {
                                           ? ((page.compositionTotal > 0 ? Math.round(page.compositionSegments[page.compositionHoverIndex].amount / page.compositionTotal * 100) : 0) + "%")
                                           : (page.compositionCount() + " 笔")
                             onSegmentHovered: function(index) { page.setCompositionHover(index) }
-                        }
-
-                        Column {
-                            width: parent.width
-                            anchors.bottom: parent.bottom
-                            spacing: 1
-                            Repeater {
-                                model: page.compositionSegments
-                                Item {
-                                    width: parent.width
-                                    height: 20
-                                    Rectangle {
-                                        anchors.fill: parent
-                                        anchors.leftMargin: -6
-                                        anchors.rightMargin: -6
-                                        radius: 7
-                                        color: page.compositionHoverIndex === index ? Theme.surfaceSunken : "transparent"
-                                    }
-                                    Rectangle { x: 0; anchors.verticalCenter: parent.verticalCenter; width: 6; height: 6; radius: 3; color: modelData.color }
-                                    Text {
-                                        x: 12
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        width: parent.width - 90
-                                        text: modelData.name
-                                        color: Theme.inkSecondary
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: 9
-                                        elide: Text.ElideRight
-                                    }
-                                    Text {
-                                        anchors.right: parent.right
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: (page.compositionTotal > 0 ? Math.round(modelData.amount / page.compositionTotal * 100) : 0) + "%"
-                                        color: Theme.muted
-                                        font.family: Theme.numberFamily
-                                        font.pixelSize: 9
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        onEntered: page.setCompositionHover(index)
-                                        onExited: page.setCompositionHover(-1)
-                                    }
-                                }
-                            }
                         }
 
                         EmptyState {
@@ -453,11 +349,11 @@ Item {
 
             Row {
                 width: parent.width
-                height: 304
-                spacing: 15
+                height: 292
+                spacing: 12
 
                 GlassCard {
-                    width: parent.width / 2 - 8
+                    width: (parent.width - 12) / 2
                     height: parent.height
                     radius: 20
                     shadow: false
@@ -688,7 +584,7 @@ Item {
                 }
 
                 GlassCard {
-                    width: parent.width / 2 - 7
+                    width: (parent.width - 12) / 2
                     height: parent.height
                     radius: 20
                     shadow: false
@@ -702,7 +598,7 @@ Item {
                         }
 
                         Text {
-                            text: "收支与星期"
+                            text: "收支"
                             color: Theme.ink
                             font.family: Theme.fontFamily
                             font.pixelSize: 13
@@ -711,7 +607,7 @@ Item {
                         FlipToggle {
                             anchors.right: parent.right
                             anchors.top: parent.top
-                            label: page.periodFlipped ? "收支" : "星期"
+                            label: page.periodFlipped ? "月份" : "星期"
                             onClicked: page.togglePeriod()
                         }
 

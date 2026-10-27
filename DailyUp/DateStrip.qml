@@ -57,12 +57,17 @@ Item {
                 border.color: Theme.alpha(Theme.accent, 0.30)
                 Behavior on color { ColorAnimation { duration: 160 } }
 
+                // 固定两行文字的行高，保证日期区高度不随字体/系统而变化
                 Column {
+                    width: parent.width
                     anchors.centerIn: parent
-                    spacing: 3
+                    spacing: 4
 
                     Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
+                        height: 12
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: Text.AlignHCenter
                         text: modelData.weekday
                         font.pixelSize: 10
                         font.weight: Font.Medium
@@ -70,7 +75,10 @@ Item {
                     }
 
                     Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
+                        height: 24
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: Text.AlignHCenter
                         text: modelData.label
                         font.pixelSize: 18
                         font.weight: pill.selected ? Font.DemiBold : Font.Medium
@@ -78,17 +86,6 @@ Item {
                                ? Theme.accentContrast
                                : (modelData.isToday ? Theme.accent : Theme.ink)
                     }
-                }
-
-                Rectangle {
-                    visible: modelData.isToday && !pill.selected
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 5
-                    width: 4
-                    height: 4
-                    radius: 2
-                    color: Theme.accent
                 }
 
                 HoverHandler {

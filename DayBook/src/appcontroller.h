@@ -63,7 +63,6 @@ class AppController : public QObject
     Q_PROPERTY(QVariantList quarterSeries READ quarterSeries NOTIFY summaryChanged)
     Q_PROPERTY(QVariantList monthlyTrend READ monthlyTrend NOTIFY summaryChanged)
     Q_PROPERTY(QVariantList weekdayStats READ weekdayStats NOTIFY summaryChanged)
-    Q_PROPERTY(QVariantList budgetHighlights READ budgetHighlights NOTIFY summaryChanged)
     Q_PROPERTY(QVariantList allCategoryOptions READ allCategoryOptions NOTIFY summaryChanged)
 
     Q_PROPERTY(bool isDemoData READ isDemoData NOTIFY summaryChanged)
@@ -144,7 +143,6 @@ public:
     QVariantList quarterSeries() const { return m_quarterSeries; }
     QVariantList monthlyTrend() const { return m_monthlyTrend; }
     QVariantList weekdayStats() const { return m_weekdayStats; }
-    QVariantList budgetHighlights() const { return m_budgetHighlights; }
     QVariantList allCategoryOptions() const { return m_allCategoryOptions; }
 
     bool isDemoData() const { return m_isDemoData; }
@@ -179,6 +177,7 @@ public:
 
     Q_INVOKABLE int saveAccount(const QVariantMap &data);
     Q_INVOKABLE bool deleteAccount(int id);
+    Q_INVOKABLE void moveAccount(int from, int to);
     Q_INVOKABLE bool accountInUse(int id) const;
 
     Q_INVOKABLE bool saveBudget(int categoryId, double amount);
@@ -269,7 +268,6 @@ private:
     QVariantList m_quarterSeries;
     QVariantList m_monthlyTrend;
     QVariantList m_weekdayStats;
-    QVariantList m_budgetHighlights;
     QVariantList m_allCategoryOptions;
 
     bool m_isDemoData = false;

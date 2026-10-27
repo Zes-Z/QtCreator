@@ -94,6 +94,9 @@ qt_add_qml_module(DayBook
         qml/components/AccountDialog.qml
         qml/components/AccountBillsDialog.qml
         qml/components/AboutDialog.qml
+        qml/components/MonthlyStatRow.qml
+        qml/components/BudgetCategoryRow.qml
+        qml/components/BudgetCategoryListCard.qml
         qml/components/BudgetDialog.qml
         qml/components/CategoryIcon.qml
         qml/charts/AreaChart.qml

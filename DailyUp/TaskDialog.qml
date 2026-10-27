@@ -66,6 +66,12 @@ Popup {
     }
 
     background: Item {
+        // 吃掉卡片空白处的点击，避免穿透到窗口内容
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+        }
+
         Rectangle {
             id: card
             anchors.fill: parent

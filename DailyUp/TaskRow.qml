@@ -8,7 +8,7 @@ Item {
     id: row
 
     width: ListView.view ? ListView.view.width : 0
-    height: 46
+    height: 45
 
     required property int taskId
     required property string taskContent
@@ -155,8 +155,8 @@ Item {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
                 text: row.taskContent
-                font.pixelSize: 13
-                font.weight: row.isPinned ? Font.DemiBold : Font.Normal
+                font.pixelSize: 14
+                font.weight: row.isPinned ? Font.Bold : Font.Medium
                 color: row.isCompleted ? Theme.faint : Theme.ink
                 font.strikeout: row.isCompleted
                 elide: Text.ElideRight

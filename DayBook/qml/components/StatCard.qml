@@ -22,7 +22,10 @@ GlassCard {
 
     Item {
         anchors.fill: parent
-        anchors.margins: 16
+        anchors.leftMargin: 16
+        anchors.rightMargin: 16
+        anchors.topMargin: 16
+        anchors.bottomMargin: 0
 
         Text {
             anchors.left: parent.left
@@ -54,7 +57,9 @@ GlassCard {
             visible: root.moneyValue
             anchors.left: parent.left
             anchors.top: parent.top
-            anchors.topMargin: 24
+            anchors.topMargin: 20
+            anchors.bottomMargin:0
+
             value: root.value
             amountSize: 23
             amountWeight: 600
@@ -65,7 +70,7 @@ GlassCard {
             visible: !root.moneyValue
             anchors.left: parent.left
             anchors.top: parent.top
-            anchors.topMargin: 24
+            anchors.topMargin: 20
             text: root.valueText
             color: Theme.ink
             font.family: Theme.numberFamily
@@ -105,7 +110,7 @@ GlassCard {
             visible: root.deltaText !== ""
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 20
+            height: 0
             width: deltaRow.implicitWidth + 14
             radius: 10
             color: root.deltaTone === "bad" ? Theme.expenseSoft

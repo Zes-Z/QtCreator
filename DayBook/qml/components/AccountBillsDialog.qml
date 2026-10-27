@@ -12,8 +12,8 @@ Popup {
 
     signal editRequested(int txId)
 
-    width: 660
-    height: 640
+    width: Math.min(660, Overlay.overlay.width - 24)
+    height: Math.min(640, Overlay.overlay.height - 24)
     modal: true
     dim: false
     padding: 22

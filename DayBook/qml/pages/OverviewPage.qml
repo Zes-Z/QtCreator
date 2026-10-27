@@ -8,7 +8,7 @@ Item {
 
     property int hoveredDonut: -1
     property var donutSegments: buildDonutSegments(App.categoryBreakdown)
-    property real donutSize: Math.min(138, Math.max(96, bottomRow.height - 160))
+    property real donutSize: Math.min(220, Math.max(120, bottomRow.height - 70))
 
     Component.onCompleted: {
         if (App.startupModal === "month")
@@ -46,7 +46,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        height: 54
+        height: 50
 
         Column {
             anchors.left: parent.left
@@ -78,10 +78,10 @@ Item {
     Row {
         id: heroRow
         anchors.top: header.bottom
-        anchors.topMargin: 12
+        anchors.topMargin: 10
         anchors.left: parent.left
         anchors.right: parent.right
-        height: 156
+        height: 150
         spacing: 14
 
         Item {
@@ -215,61 +215,28 @@ Item {
 
     }
 
-    Row {
+    MonthlyStatRow {
         id: statsRow
         anchors.top: heroRow.bottom
-        anchors.topMargin: 12
+        anchors.topMargin: 10
         anchors.left: parent.left
         anchors.right: parent.right
-        height: 92
-        spacing: 14
-
-        StatCard {
-            width: (parent.width - 28) / 3
-            height: 92
-            title: "本月支出"
-            icon: "receipt_long"
-            iconColor: Theme.expense
-            value: App.monthExpense
-            footer: App.monthTransactionCount + " 笔记录"
-            deltaText: App.lastMonthExpense > 0 ? App.percentLabel(App.expenseChange) + " 较上月" : ""
-            deltaTone: App.expenseChange > 0 ? "bad" : "good"
-            deltaArrow: App.expenseChange > 0 ? "arrow_upward" : "arrow_downward"
-        }
-        StatCard {
-            width: (parent.width - 28) / 3
-            height: 92
-            title: "本月收入"
-            icon: "payments"
-            iconColor: Theme.income
-            value: App.monthIncome
-            footer: "工资与副业"
-            deltaText: App.lastMonthIncome > 0 ? App.percentLabel(App.incomeChange) + " 较上月" : ""
-            deltaTone: App.incomeChange >= 0 ? "good" : "bad"
-            deltaArrow: App.incomeChange >= 0 ? "arrow_upward" : "arrow_downward"
-        }
-        StatCard {
-            width: (parent.width - 28) / 3
-            height: 92
-            title: "日均支出"
-            icon: "schedule"
-            iconColor: Theme.accent
-            value: App.dailyAverage
-            footer: "每笔平均 " + App.money(App.monthTransactionCount > 0 ? App.monthExpense / App.monthTransactionCount : 0)
-        }
+        width: parent.width
+        cardHeight: 98
     }
 
     Row {
         id: bottomRow
         anchors.top: statsRow.bottom
-        anchors.topMargin: 12
+        anchors.topMargin: 10
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         spacing: 14
 
         GlassCard {
-            width: Math.max(330, parent.width * 0.405)
+            id: compositionCard
+            width: Math.max(250, parent.width * 0.42)
             height: parent.height
             radius: 20
 
@@ -301,9 +268,7 @@ Item {
                     visible: page.donutSegments.length > 0
                     width: page.donutSize
                     height: page.donutSize
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: parent.top
-                    anchors.topMargin: 22
+                    anchors.centerIn: parent
                     thickness: Math.max(12, page.donutSize * 0.11)
                     segments: page.donutSegments
                     centerLabel: page.hoveredDonut >= 0 && page.hoveredDonut < page.donutSegments.length
@@ -313,51 +278,6 @@ Item {
                     centerSub: page.hoveredDonut >= 0 && page.hoveredDonut < page.donutSegments.length
                                   ? ((App.monthExpense > 0 ? Math.round(page.donutSegments[page.hoveredDonut].amount / App.monthExpense * 100) : 0) + "%") : (App.monthTransactionCount + " 笔")
                     onSegmentHovered: function(index) { page.hoveredDonut = index }
-                }
-
-                Column {
-                    width: parent.width
-                    anchors.bottom: parent.bottom
-                    spacing: 0
-                    Repeater {
-                        model: page.donutSegments
-                        Item {
-                            width: parent.width
-                            height: 20
-                            Rectangle {
-                                anchors.fill: parent
-                                anchors.leftMargin: -6
-                                anchors.rightMargin: -6
-                                radius: 6
-                                color: page.hoveredDonut === index ? Theme.surfaceSunken : "transparent"
-                            }
-                            Rectangle { x: 0; anchors.verticalCenter: parent.verticalCenter; width: 6; height: 6; radius: 3; color: modelData.color }
-                            Text {
-                                x: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: parent.width - 90
-                                text: modelData.name
-                                color: page.hoveredDonut === index ? Theme.ink : Theme.inkSecondary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 9
-                                elide: Text.ElideRight
-                            }
-                            Text {
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: (App.monthExpense > 0 ? Math.round(modelData.amount / App.monthExpense * 100) : 0) + "%"
-                                color: Theme.muted
-                                font.family: Theme.numberFamily
-                                font.pixelSize: 9
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                onEntered: page.hoveredDonut = index
-                                onExited: page.hoveredDonut = -1
-                            }
-                        }
-                    }
                 }
 
                 EmptyState {
@@ -373,158 +293,16 @@ Item {
             }
         }
 
-        GlassCard {
-            width: parent.width - Math.max(330, parent.width * 0.405) - 14
+        BudgetCategoryListCard {
+            width: parent.width - compositionCard.width - 14
             height: parent.height
             radius: 20
-
-            Item {
-                anchors.fill: parent
-                anchors.margins: 16
-
-                Text {
-                    anchors.left: parent.left
-                    anchors.top: parent.top
-                    text: "预算提醒"
-                    color: Theme.ink
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 13
-                    font.weight: 600
-                }
-                Text {
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.topMargin: 2
-                    text: "按使用进度排序"
-                    color: Theme.faint
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 9
-                }
-
-                Column {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.topMargin: 30
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 26
-                    spacing: 0
-
-                    Repeater {
-                        model: App.budgetHighlights
-                        Item {
-                            width: parent.width
-                            height: parent.height / Math.max(1, App.budgetHighlights.length)
-
-                            CategoryIcon {
-                                id: budgetIcon
-                                x: 0
-                                anchors.verticalCenter: parent.verticalCenter
-                                icon: modelData.icon
-                                accentColor: modelData.color
-                                size: 30
-                                iconSize: 15
-                            }
-
-                            Column {
-                                anchors.left: budgetIcon.right
-                                anchors.leftMargin: 10
-                                anchors.right: budgetValue.left
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 5
-                                Row {
-                                    width: parent.width
-                                    Text {
-                                        text: modelData.name
-                                        color: Theme.ink
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: 10
-                                        font.weight: 600
-                                    }
-                                    Text {
-                                        text: "  已用 " + modelData.percent + "%"
-                                        color: modelData.over ? Theme.expense : Theme.faint
-                                        font.family: Theme.numberFamily
-                                        font.pixelSize: 8
-                                    }
-                                }
-                                ProgressBar {
-                                    width: parent.width
-                                    height: 4
-                                    barHeight: 4
-                                    value: Math.min(1, modelData.percent / 100)
-                                    fillColor: modelData.over ? Theme.danger : modelData.color
-                                    over: modelData.over
-                                }
-                            }
-
-                            Column {
-                                id: budgetValue
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 2
-                                Text {
-                                    anchors.right: parent.right
-                                    text: modelData.over ? "超出 " + App.money(modelData.spent - modelData.budget)
-                                                         : "剩余 " + App.money(modelData.budget - modelData.spent)
-                                    color: modelData.over ? Theme.expense : Theme.inkSecondary
-                                    font.family: Theme.numberFamily
-                                    font.pixelSize: 9
-                                    font.weight: 600
-                                }
-                                Text {
-                                    anchors.right: parent.right
-                                    text: App.money(modelData.spent) + " / " + App.money(modelData.budget)
-                                    color: Theme.faint
-                                    font.family: Theme.numberFamily
-                                    font.pixelSize: 8
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Text {
-                    visible: App.budgetHighlights.length === 0
-                    anchors.centerIn: parent
-                    text: "还没有分类预算"
-                    color: Theme.faint
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 10
-                }
-
-                Item {
-                    width: manageRow.width
-                    height: 16
-                    anchors.left: parent.left
-                    anchors.bottom: parent.bottom
-                    Row {
-                        id: manageRow
-                        spacing: 3
-                        Text {
-                            text: "管理预算"
-                            color: Theme.accent
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 9
-                            font.weight: 500
-                        }
-                        Icon { name: "chevron_right"; size: 11; iconColor: Theme.accent; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: UiBus.navigate("budgets")
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    z: -1
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: UiBus.navigate("budgets")
-                }
-            }
+            shadow: false
+            compact: true
+            showActions: false
+            showAddRow: false
+            onRowClicked: UiBus.navigate("budgets")
+            onAddRequested: UiBus.navigate("budgets")
         }
     }
 }

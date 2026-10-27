@@ -95,18 +95,20 @@ Item {
     }
 
     Column {
+        width: root.width * 0.82
         anchors.centerIn: parent
         spacing: 2
         Text {
-            width: root.width * 0.62
+            width: parent.width
             text: root.centerLabel
             color: Theme.muted
             font.family: Theme.fontFamily
-            font.pixelSize: 10
+            font.pixelSize: Math.max(12, Math.round(root.width * 0.065))
+            font.weight: 600
             horizontalAlignment: Text.AlignHCenter
         }
         Text {
-            width: root.width * 0.82
+            width: parent.width
             text: root.centerValue
             color: Theme.ink
             font.family: Theme.numberFamily
@@ -116,11 +118,12 @@ Item {
             elide: Text.ElideRight
         }
         Text {
-            width: root.width * 0.62
+            width: parent.width
             text: root.centerSub
-            color: Theme.faint
+            color: Theme.muted
             font.family: Theme.fontFamily
-            font.pixelSize: 10
+            font.pixelSize: Math.max(12, Math.round(root.width * 0.065))
+            font.weight: 600
             horizontalAlignment: Text.AlignHCenter
         }
     }

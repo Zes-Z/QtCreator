@@ -461,6 +461,46 @@ void AppController::moveSummaryItem(int from, int to)
     emit uiOrderChanged();
 }
 
+void AppController::moveAccount(int from, int to)
+{
+    QVector<int> ids;
+    QSqlQuery read(Database::instance().db());
+    read.prepare("SELECT id FROM accounts WHERE archived=0 ORDER BY sort, id");
+    if (!read.exec()) {
+        setLastError(QStringLiteral("读取账户顺序失败：%1").arg(read.lastError().text()));
+        return;
+    }
+    while (read.next())
+        ids.append(read.value(0).toInt());
+
+    if (from < 0 || to < 0 || from >= ids.size() || to >= ids.size() || from == to)
+        return;
+    ids.move(from, to);
+
+    QSqlDatabase db = Database::instance().db();
+    if (!db.transaction()) {
+        setLastError(QStringLiteral("无法保存账户顺序：%1").arg(db.lastError().text()));
+        return;
+    }
+    for (int i = 0; i < ids.size(); ++i) {
+        QSqlQuery update(db);
+        update.prepare("UPDATE accounts SET sort=:sort WHERE id=:id");
+        update.bindValue(":sort", i);
+        update.bindValue(":id", ids.at(i));
+        if (!update.exec()) {
+            db.rollback();
+            setLastError(QStringLiteral("保存账户顺序失败：%1").arg(update.lastError().text()));
+            return;
+        }
+    }
+    if (!db.commit()) {
+        setLastError(QStringLiteral("保存账户顺序失败：%1").arg(db.lastError().text()));
+        return;
+    }
+    if (m_accounts)
+        m_accounts->moveAccountRow(from, to);
+}
+
 void AppController::setLastError(const QString &message)
 {
     if (m_lastError == message)
@@ -903,23 +943,6 @@ void AppController::refreshSummary()
                 m_allCategoryOptions.append(item);
             }
         }
-    }
-
-    m_budgetHighlights.clear();
-    if (m_budgets) {
-        QVector<QVariantMap> highlights;
-        for (int i = 0; i < m_budgets->rowCount(); ++i)
-            highlights.append(m_budgets->get(i));
-        std::sort(highlights.begin(), highlights.end(), [](const QVariantMap &a, const QVariantMap &b) {
-            const int pa = a.value("percent").toInt();
-            const int pb = b.value("percent").toInt();
-            if (pa != pb)
-                return pa > pb;
-            return a.value("spent").toDouble() > b.value("spent").toDouble();
-        });
-        const int count = qMin(4, highlights.size());
-        for (int i = 0; i < count; ++i)
-            m_budgetHighlights.append(highlights.at(i));
     }
 
     m_isDemoData = Database::instance().isDemoSeeded() && Database::instance().transactionCount() > 0;

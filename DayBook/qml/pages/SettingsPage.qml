@@ -79,11 +79,11 @@ Item {
             id: content
             width: flick.width
             y: 0
-            spacing: 15
+            spacing: 10
 
             Item {
                 width: parent.width
-                height: 58
+                height: 50
                 Column {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
@@ -115,11 +115,12 @@ Item {
 
             Row {
                 width: parent.width
-                height: 234
-                spacing: 15
+                height: 190
+                spacing: 10
 
                 GlassCard {
-                    width: parent.width - 380
+                    id: appearanceCard
+                    width: parent.width - currencyCard.width - 15
                     height: parent.height
                     radius: 20
                     shadow: false
@@ -148,10 +149,12 @@ Item {
                         Rectangle {
                             id: fontButton
                             anchors.top: parent.top
-                            anchors.right: parent.right
-                            width: 112
-                            height: 28
-                            radius: 9
+                            anchors.topMargin: 46
+                            anchors.left: themeControl.right
+                            anchors.leftMargin: 8
+                            width: 104
+                            height: 34
+                            radius: 10
                             color: fontMouse.containsMouse ? Theme.surfaceRaised : Theme.surfaceSunken
                             border.width: 1
                             border.color: fontMouse.containsMouse ? Theme.withAlpha(Theme.accent, 0.24) : Theme.hairline
@@ -250,50 +253,23 @@ Item {
                             }
                         }
 
-                        Row {
+                        SegmentedControl {
+                            id: themeControl
                             anchors.top: parent.top
-                            anchors.topMargin: 52
-                            width: parent.width
-                            spacing: 12
-                            Column {
-                                width: parent.width
-                                spacing: 7
-                                Text {
-                                    text: "主题"
-                                    color: Theme.inkSecondary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: 10
-                                    font.weight: 600
-                                }
-                                Item {
-                                    width: parent.width
-                                    height: 34
-                                    SegmentedControl {
-                                        width: implicitWidth
-                                        height: 34
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        items: ["浅色", "深色", "跟随系统"]
-                                        currentIndex: page.themeIndex
-                                        onActivated: function(index) {
-                                            App.setThemeMode(index === 0 ? "light" : index === 1 ? "dark" : "system")
-                                        }
-                                    }
-                                }
+                            anchors.topMargin: 46
+                            width: implicitWidth
+                            height: 34
+                            items: ["浅色", "深色", "跟随系统"]
+                            currentIndex: page.themeIndex
+                            onActivated: function(index) {
+                                App.setThemeMode(index === 0 ? "light" : index === 1 ? "dark" : "system")
                             }
-
                         }
 
                         Column {
                             anchors.left: parent.left
                             anchors.bottom: parent.bottom
-                            spacing: 7
-                            Text {
-                                text: "强调色"
-                                color: Theme.inkSecondary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 10
-                                font.weight: 600
-                            }
+                            spacing: 0
                             Row {
                                 spacing: 10
                                 Repeater {
@@ -373,7 +349,8 @@ Item {
                 }
 
                 GlassCard {
-                    width: 365
+                    id: currencyCard
+                    width: Math.max(260, Math.min(365, parent.width * 0.39))
                     height: parent.height
                     radius: 20
                     shadow: false
@@ -402,7 +379,7 @@ Item {
                         Column {
                             anchors.left: parent.left
                             anchors.top: parent.top
-                            anchors.topMargin: 52
+                            anchors.topMargin: 46
                             spacing: 7
                             Text {
                                 text: "货币"
@@ -513,7 +490,7 @@ Item {
 
             GlassCard {
                 width: parent.width
-                height: 300
+                height: page.height < 650 ? Math.max(250, page.height - 260) : 300
                 radius: 20
                 shadow: false
 
@@ -598,7 +575,7 @@ Item {
         signal clicked()
 
         width: parent.width
-        height: 52
+        height: 44
 
         Rectangle {
             anchors.fill: parent

@@ -515,6 +515,15 @@ void AccountModel::reload()
     emit summaryChanged();
 }
 
+void AccountModel::moveAccountRow(int from, int to)
+{
+    if (from < 0 || to < 0 || from >= m_rows.size() || to >= m_rows.size() || from == to)
+        return;
+    beginMoveRows(QModelIndex(), from, from, QModelIndex(), to > from ? to + 1 : to);
+    m_rows.move(from, to);
+    endMoveRows();
+}
+
 // ---------------------------------------------------------------------------
 
 CategoryModel::CategoryModel(QObject *parent)

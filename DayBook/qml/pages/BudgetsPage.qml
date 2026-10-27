@@ -225,7 +225,7 @@ Item {
         }
     }
 
-    GlassCard {
+    BudgetCategoryListCard {
         id: listCard
         anchors.top: heroCard.bottom
         anchors.topMargin: 12
@@ -233,233 +233,21 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         radius: 20
-
-        Item {
-            anchors.fill: parent
-            anchors.margins: 16
-
-            Item {
-                id: listHeader
-                width: parent.width
-                height: 34
-                Text {
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "分类预算"
-                    color: Theme.ink
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 13
-                    font.weight: 600
-                }
-                Text {
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: App.budgets.count + " 个分类 · 每月独立"
-                    color: Theme.faint
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 9
-                }
-            }
-
-            Flickable {
-                id: budgetScroll
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: listHeader.bottom
-                anchors.bottom: parent.bottom
-                clip: true
-                contentWidth: width
-                contentHeight: rowsColumn.height
-                boundsBehavior: Flickable.StopAtBounds
-                interactive: true
-
-                Column {
-                id: rowsColumn
-                width: budgetScroll.width
-                spacing: 0
-
-                Repeater {
-                    model: App.budgets
-                    Item {
-                        width: rowsColumn.width
-                        height: 60
-
-                        CategoryIcon {
-                            id: budgetIcon
-                            x: 4
-                            anchors.verticalCenter: parent.verticalCenter
-                            icon: model.icon
-                            accentColor: model.color
-                            size: 34
-                            iconSize: 17
-                        }
-
-                        Column {
-                            anchors.left: budgetIcon.right
-                            anchors.leftMargin: 11
-                            anchors.right: budgetActions.left
-                            anchors.rightMargin: 12
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 5
-                            Row {
-                                width: parent.width
-                                Text {
-                                    text: model.name
-                                    color: Theme.ink
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: 11
-                                    font.weight: 600
-                                }
-                                Text {
-                                    text: "  " + App.money(model.spent) + " / " + App.money(model.budget)
-                                    color: Theme.muted
-                                    font.family: Theme.numberFamily
-                                    font.pixelSize: 9
-                                }
-                            }
-                            ProgressBar {
-                                width: parent.width
-                                height: 5
-                                value: model.percent / 100
-                                fillColor: model.over ? Theme.danger : model.color
-                                over: model.over
-                                barHeight: 5
-                            }
-                        }
-
-                        HoverHandler { id: rowHover }
-
-                        Column {
-                            id: budgetActions
-                            anchors.right: parent.right
-                            anchors.rightMargin: 58
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 2
-                            Text {
-                                anchors.right: parent.right
-                                text: (model.over ? "超出 " : "剩余 ") + App.money(Math.abs(model.remaining))
-                                color: model.over ? Theme.danger : Theme.ink
-                                font.family: Theme.numberFamily
-                                font.pixelSize: 10
-                                font.weight: 600
-                            }
-                            Text {
-                                anchors.right: parent.right
-                                text: "已用 " + model.percent + "%"
-                                color: model.over ? Theme.danger : Theme.faint
-                                font.family: Theme.fontFamily
-                                font.pixelSize: 8
-                            }
-                        }
-
-                        Row {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 0
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 0
-                            z: 5
-                            opacity: rowHover.hovered ? 1 : 0
-                            Behavior on opacity { NumberAnimation { duration: 120 } }
-                            IconButton { icon: "edit"; size: 26; iconSize: 14; onClicked: budgetDialog.openFor(model.categoryId) }
-                            IconButton {
-                                icon: "delete"
-                                size: 26
-                                iconSize: 14
-                                iconColor: Theme.muted
-                                hoverColor: Theme.dangerSoft
-                                onClicked: {
-                                    page.pendingCategoryId = model.categoryId
-                                    page.pendingCategoryName = model.name
-                                    removeDialog.open()
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            width: parent.width - 8
-                            x: 4
-                            height: 1
-                            color: Theme.hairline
-                            opacity: index === App.budgets.count - 1 ? 0 : 0.65
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            z: 0
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: budgetDialog.openFor(model.categoryId)
-                        }
-                    }
-                }
-
-                Item {
-                    id: addBudgetRow
-                    visible: App.budgets.count > 0
-                    width: rowsColumn.width
-                    height: 48
-
-                    Rectangle {
-                        anchors.fill: parent
-                        anchors.margins: 2
-                        radius: 10
-                        color: addBudgetMouse.containsMouse ? Theme.withAlpha(Theme.accent, 0.055) : "transparent"
-                        border.width: 1
-                        border.color: addBudgetMouse.containsMouse ? Theme.withAlpha(Theme.accent, 0.36) : Theme.hairline
-                        Behavior on color { ColorAnimation { duration: 120 } }
-                    }
-
-                    Row {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 10
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 10
-                        Rectangle {
-                            width: 28
-                            height: 28
-                            radius: 9
-                            color: Theme.accentWash
-                            Icon { anchors.centerIn: parent; name: "add"; size: 15; iconColor: Theme.accent }
-                        }
-                        Text {
-                            text: "添加分类预算"
-                            color: Theme.accent
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 10
-                            font.weight: 500
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-
-                    MouseArea {
-                        id: addBudgetMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: budgetDialog.openNew()
-                    }
-                }
-                }
-            }
-
-            EmptyState {
-                visible: App.budgets.count === 0
-                anchors.centerIn: parent
-                width: parent.width
-                icon: "pie_chart"
-                title: "还没有分类预算"
-                description: "从最容易超支的分类开始，给这个月设个上限。"
-                actionText: "设置预算"
-                onActionClicked: budgetDialog.openNew()
-            }
+        showActions: true
+        showAddRow: true
+        onEditRequested: function(categoryId) { budgetDialog.openFor(categoryId) }
+        onDeleteRequested: function(categoryId, name) {
+            page.pendingCategoryId = categoryId
+            page.pendingCategoryName = name
+            removeDialog.open()
         }
+        onAddRequested: budgetDialog.openNew()
+        onRowClicked: function(categoryId) { budgetDialog.openFor(categoryId) }
     }
 
     BudgetDialog {
         id: budgetDialog
-        onSaved: Qt.callLater(function() {
-            budgetScroll.contentY = Math.max(0, budgetScroll.contentHeight - budgetScroll.height)
-        })
+        onSaved: Qt.callLater(function() { listCard.scrollToBottom() })
     }
 
     ConfirmDialog {

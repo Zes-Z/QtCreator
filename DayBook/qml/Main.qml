@@ -9,8 +9,8 @@ Window {
 
     width: 1200
     height: 800
-    minimumWidth: 1060
-    minimumHeight: 740
+    minimumWidth: 860
+    minimumHeight: 600
     visible: true
     color: "transparent"
     flags: Qt.Window | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
@@ -18,6 +18,8 @@ Window {
 
     property bool maximized: visibility === Window.Maximized || visibility === Window.FullScreen
     property int frame: 0
+    readonly property int shellTop: 58
+    readonly property int shellBottom: 8
     property int chromeRadius: maximized ? 0 : 26
     property string currentPage: App.startupPage
 
@@ -239,7 +241,7 @@ Window {
             Item {
                 id: topBar
                 width: parent.width
-                height: 64
+                height: 58
 
                 MouseArea {
                     anchors.fill: parent
@@ -260,26 +262,19 @@ Window {
                     onMaximizeClicked: win.toggleFullScreen()
                 }
 
-                Rectangle {
+                Item {
                     id: logoMark
-                    x: 86
-                    y: 17
-                    width: 30
-                    height: 30
-                    radius: 9
-                    color: Theme.accentDeep
-                    gradient: Gradient {
-                        GradientStop { position: 0; color: Theme.accent }
-                        GradientStop { position: 1; color: Theme.accentDeep }
-                    }
-                    border.width: 1
-                    border.color: Theme.withAlpha("#FFFFFF", 0.22)
-                    Icon {
-                        anchors.centerIn: parent
-                        name: "auto_stories"
-                        size: 17
-                        filled: true
-                        iconColor: "#FFF9F0"
+                    x: 85
+                    y: 16
+                    width: 32
+                    height: 32
+                    Image {
+                        anchors.fill: parent
+                        source: "qrc:/assets/appicon.png"
+                        sourceSize.width: 64
+                        sourceSize.height: 64
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
                     }
                     MouseArea {
                         anchors.fill: parent
@@ -346,10 +341,10 @@ Window {
             // -------------------------------------------------------------- sidebar
             GlassCard {
                 id: sidebar
-                x: 16
-                y: 74
-                width: 228
-                height: chrome.height - 90
+                x: 12
+                y: win.shellTop
+                width: 204
+                height: chrome.height - win.shellTop - win.shellBottom
                 radius: 22
                 tint: Theme.sidebarSurface
                 shadow: true
@@ -360,7 +355,7 @@ Window {
 
                 Item {
                     anchors.fill: parent
-                    anchors.margins: 14
+                    anchors.margins: 12
 
                     Column {
                         id: navColumn
@@ -479,6 +474,7 @@ Window {
                             Item {
                                 id: summaryRow
                                 property real dragOffset: 0
+                                visible: index < 2 || chrome.height >= 720
                                 width: parent.width
                                 height: summaryCard.implicitHeight
                                 z: summaryDrag.active ? 50 : 0
@@ -576,10 +572,10 @@ Window {
             // --------------------------------------------------------------- content
             Loader {
                 id: pageLoader
-                x: 258
-                y: 74
-                width: chrome.width - 274
-                height: chrome.height - 90
+                x: 226
+                y: win.shellTop
+                width: chrome.width - 238
+                height: chrome.height - win.shellTop - win.shellBottom
                 sourceComponent: {
                     if (win.currentPage === "transactions")
                         return transactionsPage

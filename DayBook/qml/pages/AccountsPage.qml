@@ -10,6 +10,8 @@ Item {
     property string pendingAccountName: ""
     property bool pendingArchives: false
     readonly property real distributionTotal: Math.max(1, App.totalAssets + App.totalLiabilities)
+    // 页头 58 + 两段 15 + 净资产卡 150 + 行间 15；只保留两行账户卡的高度。
+    readonly property real accountCardHeight: Math.min(154, Math.max(120, (flick.height - 238 - 15) / 2))
 
     Component.onCompleted: {
         if (App.startupModal === "account")
@@ -43,14 +45,14 @@ Item {
         id: flick
         anchors.fill: parent
         contentWidth: width
-        contentHeight: content.height + 20
+        contentHeight: Math.max(flick.height, content.implicitHeight)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
         Column {
             id: content
             width: flick.width
-            y: 2
+            y: 0
             spacing: 15
 
             Item {
@@ -219,16 +221,38 @@ Item {
                 width: parent.width
                 columns: 3
                 spacing: 15
+                move: Transition {
+                    NumberAnimation {
+                        properties: "x,y"
+                        duration: 280
+                        easing.type: Easing.OutCubic
+                    }
+                }
 
                 Repeater {
                     model: App.accounts
                     GlassCard {
                         id: accountCard
+                        property real dragOffsetX: 0
+                        property real dragOffsetY: 0
+                        property bool dragMoved: false
                         width: (grid.width - 30) / 3
-                        height: 154
+                        height: page.accountCardHeight
                         radius: 18
                         shadow: false
                         interactive: true
+                        z: cardDrag.active ? 40 : 0
+                        scale: cardDrag.active ? 1.025 : 1.0
+                        Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                        transform: Translate { x: accountCard.dragOffsetX; y: accountCard.dragOffsetY }
+                        Behavior on dragOffsetX {
+                            enabled: !cardDrag.active
+                            NumberAnimation { duration: 230; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on dragOffsetY {
+                            enabled: !cardDrag.active
+                            NumberAnimation { duration: 230; easing.type: Easing.OutCubic }
+                        }
 
                         Rectangle {
                             anchors.fill: parent
@@ -243,8 +267,51 @@ Item {
 
                         MouseArea {
                             anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: accountBillsDialog.openFor(model.accountId, model.name, model.color)
+                            cursorShape: cardDrag.active ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                            onClicked: {
+                                if (accountCard.dragMoved) {
+                                    accountCard.dragMoved = false
+                                    return
+                                }
+                                accountBillsDialog.openFor(model.accountId, model.name, model.color)
+                            }
+                        }
+
+                        DragHandler {
+                            id: cardDrag
+                            target: null
+                            acceptedButtons: Qt.LeftButton
+                            dragThreshold: 8
+                            xAxis.enabled: true
+                            yAxis.enabled: true
+                            onTranslationChanged: {
+                                if (!active)
+                                    return
+                                accountCard.dragOffsetX = activeTranslation.x
+                                accountCard.dragOffsetY = activeTranslation.y
+                            }
+                            onActiveChanged: {
+                                if (active) {
+                                    accountCard.dragMoved = true
+                                    return
+                                }
+                                const gap = 15
+                                const cellW = (grid.width - gap * 2) / 3
+                                const cellH = 154
+                                const startCol = index % 3
+                                const startRow = Math.floor(index / 3)
+                                let col = Math.round((startCol * (cellW + gap) + accountCard.dragOffsetX) / (cellW + gap))
+                                col = Math.max(0, Math.min(2, col))
+                                let maxRow = Math.max(0, Math.floor((App.accounts.count - 1) / 3))
+                                let row = Math.round((startRow * (cellH + gap) + accountCard.dragOffsetY) / (cellH + gap))
+                                row = Math.max(0, Math.min(maxRow, row))
+                                const target = Math.min(App.accounts.count - 1, row * 3 + col)
+                                accountCard.dragOffsetX = 0
+                                accountCard.dragOffsetY = 0
+                                if (target !== index)
+                                    App.moveAccount(index, target)
+                                Qt.callLater(function() { accountCard.dragMoved = false })
+                            }
                         }
 
                         Item {
@@ -324,7 +391,7 @@ Item {
 
                 GlassCard {
                     width: (grid.width - 30) / 3
-                    height: 154
+                    height: page.accountCardHeight
                     radius: 18
                     shadow: false
                     tint: Theme.surfaceSunken

@@ -195,15 +195,15 @@ Item {
                 }
             }
 
-            Row {
+            Column {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 10
+                spacing: 2
                 Row {
                     spacing: 5
-                    Rectangle { width: 5; height: 5; radius: 3; color: Theme.expense; anchors.verticalCenter: parent.verticalCenter }
+                    Rectangle { width: 5; height: 5; radius: 3; color: Theme.income; anchors.verticalCenter: parent.verticalCenter }
                     Text {
-                        text: "支出 " + App.money(App.monthExpense)
+                        text: "收入 " + App.money(App.monthIncome)
                         color: Theme.inkSecondary
                         font.family: Theme.numberFamily
                         font.pixelSize: 10
@@ -212,9 +212,9 @@ Item {
                 }
                 Row {
                     spacing: 5
-                    Rectangle { width: 5; height: 5; radius: 3; color: Theme.income; anchors.verticalCenter: parent.verticalCenter }
+                    Rectangle { width: 5; height: 5; radius: 3; color: Theme.expense; anchors.verticalCenter: parent.verticalCenter }
                     Text {
-                        text: "收入 " + App.money(App.monthIncome)
+                        text: "支出 " + App.money(App.monthExpense)
                         color: Theme.inkSecondary
                         font.family: Theme.numberFamily
                         font.pixelSize: 10

@@ -9,7 +9,7 @@ Window {
     width: 360
     height: 640
     minimumWidth: 320
-    minimumHeight: 400
+    minimumHeight: 360
     maximumWidth: 560
     maximumHeight: 900
 
@@ -301,11 +301,11 @@ Window {
 
             anchors.left: parent.left
             anchors.top: parent.top
-            anchors.leftMargin: 18
-            anchors.topMargin: 43
+            anchors.leftMargin: 12
+            anchors.topMargin: 36
 
             text: root.dateHeading
-            font.pixelSize: 22
+            font.pixelSize: 21
             font.weight: Font.DemiBold
             color: Theme.ink
         }
@@ -329,7 +329,7 @@ Window {
             anchors.leftMargin: 8
             anchors.verticalCenter: weekdayLabel.verticalCenter
 
-            width: 34
+            width: 33
             height: 18
             radius: 9
             color: Theme.accentSoft
@@ -345,7 +345,7 @@ Window {
 
         Text {
             anchors.right: parent.right
-            anchors.rightMargin: 18
+            anchors.rightMargin: 12
             anchors.baseline: dateLabel.baseline
 
             visible: taskManager.totalCount > 0
@@ -359,11 +359,11 @@ Window {
             id: progressTrack
 
             anchors.top: dateLabel.bottom
-            anchors.topMargin: 8
+            anchors.topMargin: 6
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.leftMargin: 18
-            anchors.rightMargin: 18
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
 
             height: 3
             radius: 1.5
@@ -382,12 +382,12 @@ Window {
             id: dateStrip
 
             anchors.top: progressTrack.bottom
-            anchors.topMargin: 10
+            anchors.topMargin: 8
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.leftMargin: 18
-            anchors.rightMargin: 18
-            height: 56
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
+            height: 48
 
             today: root.todayDate
             selectedDate: root.currentDate
@@ -402,27 +402,30 @@ Window {
             id: taskCard
 
             anchors.top: dateStrip.bottom
-            anchors.topMargin: 10
+            anchors.topMargin: 6
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.leftMargin: 18
-            anchors.rightMargin: 18
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
             anchors.bottom: addButton.top
-            anchors.bottomMargin: 10
+            anchors.bottomMargin: 9   // 卡片底 → 按钮顶，与按钮底边 9 对称
 
             radius: Theme.cardRadius
             color: Theme.card
             border.width: 1
             border.color: Theme.cardBorder
 
+
             ListView {
                 id: taskList
 
                 anchors.fill: parent
-                anchors.margins: 8
-                anchors.bottomMargin: taskCard.height > 270 ? 30 : 12
+
+                anchors.margins: 9
+                anchors.bottomMargin: taskCard.height > 270 ? 32 : 9
                 clip: true
-                spacing: 4
+                spacing: 6  // 任务条间距
+
                 model: taskManager
 
                 delegate: TaskRow {
@@ -510,12 +513,12 @@ Window {
 
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.leftMargin: 18
-            anchors.rightMargin: 18
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 16
+            anchors.bottomMargin: 9    // 距窗口底边
 
-            height: 46
+            height: 45
             radius: 14
 
             gradient: Gradient {
@@ -644,6 +647,34 @@ Window {
                 root.height = Math.max(root.minimumHeight,
                                        Math.min(root.maximumHeight,
                                                 startHeight + mouse.scenePosition.y - startSceneY))
+            }
+        }
+
+        // 弹窗打开时的透明拦截层：点击/滚轮不会再落到日期条或任务列表
+        MouseArea {
+            id: modalBlocker
+
+            anchors.fill: parent
+            // 位于内容之上、弹窗之下；靠声明顺序而不是 z 值
+            visible: addDialog.opened || editDialog.opened || themePicker.opened
+            enabled: visible
+            acceptedButtons: Qt.AllButtons
+            hoverEnabled: true
+            preventStealing: true
+            cursorShape: Qt.ArrowCursor
+
+            onPressed: (mouse) => {
+                if (addDialog.opened)
+                    addDialog.close()
+                else if (editDialog.opened)
+                    editDialog.close()
+                else if (themePicker.opened)
+                    themePicker.close()
+                mouse.accepted = true
+            }
+
+            onWheel: (wheel) => {
+                wheel.accepted = true
             }
         }
 

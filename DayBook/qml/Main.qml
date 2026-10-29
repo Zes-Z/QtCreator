@@ -9,7 +9,7 @@ Window {
 
     width: 1200
     height: 800
-    minimumWidth: 860
+    minimumWidth: 840
     minimumHeight: 600
     visible: true
     color: "transparent"

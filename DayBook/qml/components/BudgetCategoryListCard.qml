@@ -138,6 +138,9 @@ GlassCard {
             visible: App.budgets.count === 0
             anchors.centerIn: parent
             width: parent.width
+            contentOffset: 8
+            contentSpacing: 7
+            titleSize: 13
             icon: "pie_chart"
             title: "还没有分类预算"
             description: "从最容易超支的分类开始，给这个月设个上限。"

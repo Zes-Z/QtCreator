@@ -227,7 +227,7 @@ Item {
 
             MonthlyStatRow {
                 width: parent.width
-                cardHeight: 98
+                cardHeight: 104
             }
 
             Row {

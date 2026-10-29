@@ -9,6 +9,9 @@ Item {
     property string description: "点击下方按钮，记下今天的第一笔。"
     property string actionText: ""
     property string actionIcon: "add"
+    property real contentOffset: 0
+    property real contentSpacing: 10
+    property int titleSize: 15
     signal actionClicked()
 
     implicitHeight: column.implicitHeight
@@ -16,8 +19,9 @@ Item {
     Column {
         id: column
         width: parent.width
-        spacing: 10
+        spacing: root.contentSpacing
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.contentOffset
 
         Rectangle {
             width: 64
@@ -39,7 +43,7 @@ Item {
             text: root.title
             color: Theme.ink
             font.family: Theme.fontFamily
-            font.pixelSize: 15
+            font.pixelSize: root.titleSize
             font.weight: 600
             horizontalAlignment: Text.AlignHCenter
         }

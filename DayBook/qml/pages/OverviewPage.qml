@@ -222,7 +222,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         width: parent.width
-        cardHeight: 98
+        cardHeight: 104
     }
 
     Row {
@@ -284,6 +284,9 @@ Item {
                     visible: page.donutSegments.length === 0
                     anchors.centerIn: parent
                     width: parent.width
+                    contentOffset: 8
+                    contentSpacing: 7
+                    titleSize: 13
                     icon: "donut_large"
                     title: "还没有支出"
                     description: "记下第一笔，构成图就会出现在这里。"

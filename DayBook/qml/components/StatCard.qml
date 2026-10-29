@@ -15,6 +15,8 @@ GlassCard {
     property string deltaTone: "none"
     property string deltaArrow: ""
     property bool footerBelowValue: false
+    property bool clickable: false
+    signal clicked()
 
     implicitHeight: 98
     radius: Theme.cardRadius
@@ -31,11 +33,10 @@ GlassCard {
             anchors.left: parent.left
             anchors.top: parent.top
             text: root.title
-            color: Theme.muted
+            color: Theme.ink
             font.family: Theme.fontFamily
-            font.pixelSize: 10
-            font.weight: 500
-            font.letterSpacing: 0.3
+            font.pixelSize: 13
+            font.weight: 600
         }
 
         Rectangle {
@@ -57,7 +58,7 @@ GlassCard {
             visible: root.moneyValue
             anchors.left: parent.left
             anchors.top: parent.top
-            anchors.topMargin: 20
+            anchors.topMargin: 27
             anchors.bottomMargin:0
 
             value: root.value
@@ -70,7 +71,7 @@ GlassCard {
             visible: !root.moneyValue
             anchors.left: parent.left
             anchors.top: parent.top
-            anchors.topMargin: 20
+            anchors.topMargin: 18
             text: root.valueText
             color: Theme.ink
             font.family: Theme.numberFamily
@@ -87,7 +88,7 @@ GlassCard {
             text: root.footer
             color: Theme.faint
             font.family: Theme.fontFamily
-            font.pixelSize: 8
+            font.pixelSize: 9
             horizontalAlignment: Text.AlignRight
             elide: Text.ElideRight
         }
@@ -95,13 +96,16 @@ GlassCard {
         Text {
             visible: root.footerBelowValue
             anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.topMargin: 54
-            width: parent.width - (delta.visible ? delta.width + 10 : 0)
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 12
+            height: 18
+            width: parent.width - (delta.visible ? delta.width + 8 : 0)
             text: root.footer
             color: Theme.faint
             font.family: Theme.fontFamily
-            font.pixelSize: 9
+            font.pixelSize: 12
+            font.weight: 550
+            verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
 
@@ -110,9 +114,10 @@ GlassCard {
             visible: root.deltaText !== ""
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 0
+            anchors.bottomMargin: 12
+            height: 18
             width: deltaRow.implicitWidth + 14
-            radius: 10
+            radius: 9
             color: root.deltaTone === "bad" ? Theme.expenseSoft
                  : root.deltaTone === "good" ? Theme.incomeSoft
                  : Theme.surfaceSunken
@@ -124,7 +129,7 @@ GlassCard {
                 Icon {
                     name: root.deltaArrow !== "" ? root.deltaArrow
                           : root.deltaTone === "bad" ? "arrow_upward" : root.deltaTone === "good" ? "arrow_downward" : "remove"
-                    size: 10
+                    size: 11
                     weight: 500
                     iconColor: root.deltaTone === "bad" ? Theme.expense
                              : root.deltaTone === "good" ? Theme.income
@@ -136,10 +141,17 @@ GlassCard {
                          : root.deltaTone === "good" ? Theme.income
                          : Theme.muted
                     font.family: Theme.numberFamily
-                    font.pixelSize: 9
+                    font.pixelSize: 10
                     font.weight: 600
                 }
             }
         }
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        enabled: root.clickable
+        cursorShape: root.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
+        onClicked: root.clicked()
     }
 }

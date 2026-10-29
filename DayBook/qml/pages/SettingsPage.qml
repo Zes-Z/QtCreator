@@ -525,9 +525,11 @@ Item {
                     }
 
                     Column {
+                        id: settingRows
                         width: parent.width
                         anchors.top: parent.top
-                        anchors.topMargin: 46
+                        anchors.topMargin: 42
+                        anchors.bottom: parent.bottom
                         spacing: 0
 
                         SettingRow {
@@ -575,7 +577,7 @@ Item {
         signal clicked()
 
         width: parent.width
-        height: 44
+        height: parent.height / 4
 
         Rectangle {
             anchors.fill: parent
@@ -587,23 +589,23 @@ Item {
         }
 
         Rectangle {
-            width: 28
-            height: 28
-            radius: 9
+            width: 30
+            height: 30
+            radius: 10
             color: row.danger ? Theme.dangerSoft : Theme.categoryTint(Theme.accent)
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             Icon {
                 anchors.centerIn: parent
                 name: row.icon
-                size: 14
+                size: 15
                 iconColor: row.danger ? Theme.danger : Theme.accent
             }
         }
 
         Column {
             anchors.left: parent.left
-            anchors.leftMargin: 40
+            anchors.leftMargin: 42
             anchors.right: actionLabel.left
             anchors.rightMargin: 12
             anchors.verticalCenter: parent.verticalCenter
@@ -613,7 +615,7 @@ Item {
                 text: row.title
                 color: row.danger ? Theme.danger : Theme.ink
                 font.family: Theme.fontFamily
-                font.pixelSize: 11
+                font.pixelSize: 12
                 font.weight: 600
             }
             Text {
@@ -621,7 +623,7 @@ Item {
                 text: row.description
                 color: Theme.faint
                 font.family: Theme.fontFamily
-                font.pixelSize: 8
+                font.pixelSize: 9
                 elide: Text.ElideMiddle
             }
         }
@@ -634,7 +636,7 @@ Item {
             text: row.actionText
             color: row.danger ? Theme.danger : Theme.accent
             font.family: Theme.fontFamily
-            font.pixelSize: 9
+            font.pixelSize: 10
             font.weight: 500
         }
         Icon {

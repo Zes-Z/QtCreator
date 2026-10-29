@@ -247,7 +247,7 @@ Item {
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
                         text: page.accountView
-                              ? "按账户账单"
+                              ? "账户账单"
                               : (App.transactions.hasActiveFilters ? "筛选结果" : "本月账单")
                         color: Theme.ink
                         font.family: Theme.fontFamily
@@ -330,7 +330,26 @@ Item {
                     model: page.accountView ? App.accountBills : App.transactions
                     spacing: 0
                     cacheBuffer: 500
-                    boundsBehavior: Flickable.StopAtBounds
+                    boundsBehavior: Flickable.OvershootBounds
+                    property real monthPull: 0
+
+                    onMovementStarted: monthPull = 0
+                    onVerticalOvershootChanged: {
+                        if (moving)
+                            monthPull = Math.max(monthPull, Math.abs(verticalOvershoot))
+                    }
+                    onMovementEnded: {
+                        if (monthPull > 34 && contentHeight > height + 4) {
+                            if (atYEnd) {
+                                App.shiftMonth(-1)
+                                Qt.callLater(function() { list.positionViewAtEnd() })
+                            } else if (atYBeginning) {
+                                App.shiftMonth(1)
+                                Qt.callLater(function() { list.positionViewAtBeginning() })
+                            }
+                        }
+                        monthPull = 0
+                    }
 
                     delegate: Item {
                         width: list.width
@@ -424,14 +443,6 @@ Item {
                             }
                         }
                     }
-                }
-
-                AutoScrollBar {
-                    flickable: list
-                    anchors.right: parent.right
-                    anchors.top: list.top
-                    anchors.bottom: list.bottom
-                    z: 20
                 }
 
                 EmptyState {

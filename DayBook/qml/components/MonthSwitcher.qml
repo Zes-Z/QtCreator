@@ -6,7 +6,7 @@ import DayBook
 Item {
     id: root
 
-    implicitWidth: 188
+    implicitWidth: 164
     implicitHeight: 34
     property int pickerYear: new Date().getFullYear()
 
@@ -32,7 +32,7 @@ Item {
         spacing: 0
 
         Item {
-            width: 32
+            width: 28
             height: parent.height
             Icon {
                 anchors.centerIn: parent
@@ -50,7 +50,7 @@ Item {
         }
 
         Item {
-            width: 124
+            width: 108
             height: parent.height
             Text {
                 anchors.centerIn: parent
@@ -70,7 +70,7 @@ Item {
         }
 
         Item {
-            width: 32
+            width: 28
             height: parent.height
             Icon {
                 anchors.centerIn: parent
@@ -90,13 +90,13 @@ Item {
 
     Popup {
         id: picker
-        width: 288
+        width: 264
         padding: 16
         modal: false
         dim: false
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         parent: root
-        x: (root.width - width) / 2
+        x: root.width - width
         y: root.height + 8
 
         background: Item {

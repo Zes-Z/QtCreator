@@ -4,7 +4,7 @@ import DayBook
 Row {
     id: root
 
-    property real cardHeight: 98
+    property real cardHeight: 104
     readonly property real gap: 14
     readonly property real cardWidth: (width - gap * 2) / 3
     width: parent ? parent.width : implicitWidth
@@ -23,6 +23,11 @@ Row {
         deltaText: App.lastMonthExpense > 0 ? App.percentLabel(App.expenseChange) + " 较上月" : ""
         deltaTone: App.expenseChange > 0 ? "bad" : "good"
         deltaArrow: App.expenseChange > 0 ? "arrow_upward" : "arrow_downward"
+        clickable: true
+        onClicked: {
+            App.transactions.setKindFilter("expense")
+            UiBus.navigate("transactions")
+        }
     }
     StatCard {
         width: root.cardWidth
@@ -36,6 +41,11 @@ Row {
         deltaText: App.lastMonthIncome > 0 ? App.percentLabel(App.incomeChange) + " 较上月" : ""
         deltaTone: App.incomeChange >= 0 ? "good" : "bad"
         deltaArrow: App.incomeChange >= 0 ? "arrow_upward" : "arrow_downward"
+        clickable: true
+        onClicked: {
+            App.transactions.setKindFilter("income")
+            UiBus.navigate("transactions")
+        }
     }
     StatCard {
         width: root.cardWidth

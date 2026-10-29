@@ -7,6 +7,9 @@ import DailyUp
 Popup {
     id: picker
 
+    // 关闭前先通知主界面进入输入保护期
+    signal willClose()
+
     width: 208
     height: contentItem.implicitHeight
     padding: 0
@@ -143,7 +146,9 @@ Popup {
                             TapHandler {
                                 onTapped: {
                                     AppSettings.theme = modelData
-                                    picker.close()
+                                    picker.willClose()
+                                    // 等这次点击事件完全结束再关闭，避免释放事件落到下层日期块
+                                    Qt.callLater(function () { picker.close() })
                                 }
                             }
                         }
@@ -160,7 +165,6 @@ Popup {
                     property real hue: 0.92
 
                     Rectangle {
-                        id: hueBar
 
                         width: 8
                         height: parent.height
@@ -180,7 +184,6 @@ Popup {
                     }
 
                     Rectangle {
-                        id: hueKnob
                         width: 16
                         height: 16
                         radius: 8

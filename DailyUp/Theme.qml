@@ -14,7 +14,6 @@ QtObject {
     readonly property var palettes: ({
         "mist": {
             "label": "晨雾蓝",
-            "caption": "macOS 原生",
             "accent": "#3D7BF7",
             "accentDeep": "#2B5FD4",
             "accentSoft": "#E8F1FE",
@@ -22,14 +21,12 @@ QtObject {
             "bgTop": "#FCFDFF",
             "bgBottom": "#E9EEF7",
             "success": "#1EA97C",
-            "successSoft": "#E2F6EE",
             "doneTint": "#EFF8F4",
             "chip": "#F1F4FA",
             "contrast": "#FFFFFF"
         },
         "mint": {
             "label": "薄荷绿",
-            "caption": "安静治愈",
             "accent": "#1EA97F",
             "accentDeep": "#0E8763",
             "accentSoft": "#DFF5EC",
@@ -37,14 +34,12 @@ QtObject {
             "bgTop": "#FBFEFC",
             "bgBottom": "#E6F1EA",
             "success": "#12916A",
-            "successSoft": "#DDF4E8",
             "doneTint": "#E9F7F0",
             "chip": "#EFF7F2",
             "contrast": "#FFFFFF"
         },
         "sunset": {
             "label": "日落橙",
-            "caption": "温暖有活力",
             "accent": "#E8763A",
             "accentDeep": "#C25822",
             "accentSoft": "#FCEADF",
@@ -52,14 +47,12 @@ QtObject {
             "bgTop": "#FFFDFB",
             "bgBottom": "#F8E9DD",
             "success": "#2C9E7A",
-            "successSoft": "#E2F5EE",
             "doneTint": "#F9F0E7",
             "chip": "#FBF1EA",
             "contrast": "#FFFFFF"
         },
         "pink": {
             "label": "樱粉",
-            "caption": "柔和浪漫",
             "accent": "#D95C82",
             "accentDeep": "#B84467",
             "accentSoft": "#FBE7ED",
@@ -67,14 +60,12 @@ QtObject {
             "bgTop": "#FFFBFC",
             "bgBottom": "#F7E9EF",
             "success": "#1EA97C",
-            "successSoft": "#E2F6EE",
             "doneTint": "#F8EFF3",
             "chip": "#FAEFF3",
             "contrast": "#FFFFFF"
         },
         "gold": {
             "label": "鎏金",
-            "caption": "明亮金",
             "accent": "#f6f33e",
             "accentDeep": "#eae323",
             "accentSoft": "#FCF1D5",
@@ -82,7 +73,6 @@ QtObject {
             "bgTop": "#FFFDF9",
             "bgBottom": "#F9EFD8",
             "success": "#2F9E7B",
-            "successSoft": "#E2F6EE",
             "doneTint": "#FBF3E2",
             "chip": "#FBF3E0",
             "contrast": "#2B2114"
@@ -103,7 +93,6 @@ QtObject {
 
     // 语义色
     readonly property color success: p.success
-    readonly property color successSoft: p.successSoft
     readonly property color doneTint: p.doneTint
     readonly property color danger: "#E5484D"
     readonly property color dangerSoft: "#FDEBEC"
@@ -119,22 +108,14 @@ QtObject {
     // 表面
     readonly property color surface: "#FFFFFF"
     readonly property color card: Qt.rgba(1, 1, 1, 0.70)
-    readonly property color cardRaised: Qt.rgba(1, 1, 1, 0.92)
     readonly property color cardBorder: Qt.rgba(1, 1, 1, 0.85)
     readonly property color chip: p.chip
     readonly property color track: Qt.rgba(0.11, 0.11, 0.13, 0.07)
     readonly property color hairline: Qt.rgba(0.11, 0.11, 0.13, 0.075)
-    readonly property color hairlineStrong: Qt.rgba(0.11, 0.11, 0.13, 0.13)
-    readonly property color shadow: Qt.rgba(0.10, 0.14, 0.22, 0.10)
 
     // 几何
     readonly property int windowRadius: 22
     readonly property int cardRadius: 18
-    readonly property int controlRadius: 12
-    readonly property int buttonRadius: 14
-    readonly property int pagePadding: 18
-    readonly property int gap: 14
-    readonly property int smallGap: 8
 
     function alpha(c, a) {
         const col = (typeof c === "string") ? Qt.color(c) : c
@@ -176,13 +157,6 @@ QtObject {
         return hue < 0 ? hue + 1 : hue
     }
 
-    function sameColor(a, b) {
-        const ca = Qt.color(a)
-        const cb = Qt.color(b)
-        return Math.abs(ca.r - cb.r) < 0.02
-                && Math.abs(ca.g - cb.g) < 0.02
-                && Math.abs(ca.b - cb.b) < 0.02
-    }
 
     // 调色盘：从用户选的颜色推导整套浅色主题。
     function customPalette(accent) {
@@ -190,7 +164,6 @@ QtObject {
         const contrast = luminance(base) > 0.5 ? "#241F1A" : "#FFFFFF"
         return {
             "label": "自定义",
-            "caption": "调色盘",
             "accent": base,
             "accentDeep": Qt.darker(base, 1.28),
             "accentSoft": mixColor("#FFFFFF", base, 0.16),
@@ -198,7 +171,6 @@ QtObject {
             "bgTop": mixColor("#FFFFFF", base, 0.02),
             "bgBottom": mixColor("#F1F2F6", base, 0.15),
             "success": "#1EA97C",
-            "successSoft": "#E2F6EE",
             "doneTint": mixColor("#FFFFFF", base, 0.06),
             "chip": mixColor("#FFFFFF", base, 0.08),
             "contrast": contrast

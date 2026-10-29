@@ -28,6 +28,8 @@ Window {
     readonly property real completionRatio: taskManager.totalCount > 0
                                              ? taskManager.completedCount / taskManager.totalCount
                                              : 0
+    readonly property bool modalOpen: addDialog.opened || editDialog.opened
+                                         || themePicker.opened || blockerGrace.running
     readonly property string dateHeading: root.headingFor(root.currentDate)
     readonly property string dateWeekday: root.weekdayFor(root.currentDate)
 
@@ -175,14 +177,123 @@ Window {
             color: Qt.rgba(1, 1, 1, 0.65)
         }
 
-        // 空白标题栏可拖动窗口
+        // 空白标题栏可拖动窗口；松手越界时柔和回弹到屏幕可用区域
         MouseArea {
+            id: titleDrag
+
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
             height: 40
             acceptedButtons: Qt.LeftButton
-            onPressed: root.startSystemMove()
+
+            property point pressCursor: Qt.point(0, 0)
+            property real startWindowX: 0
+            property real startWindowY: 0
+            property bool dragging: false
+            property bool moved: false
+
+            function followCursor() {
+                if (!dragging)
+                    return
+
+                const p = AppSettings.cursorPosition()
+                const dx = p.x - pressCursor.x
+                const dy = p.y - pressCursor.y
+
+                // 小抖动不算拖动，避免单击标题栏时窗口跳动
+                if (!moved && Math.abs(dx) + Math.abs(dy) > 2)
+                    moved = true
+
+                if (!moved)
+                    return
+
+                root.x = startWindowX + dx
+                root.y = startWindowY + dy
+            }
+
+            function settleToScreen() {
+                // 用鼠标位置判断当前所在屏幕，兼容多显示器
+                const p = AppSettings.cursorPosition()
+                const g = AppSettings.availableGeometryAt(p.x, p.y)
+                if (!g || g.width <= 0 || g.height <= 0)
+                    return
+
+                const minX = g.x
+                const maxX = Math.max(minX, g.x + g.width - root.width)
+                const minY = g.y
+                const maxY = Math.max(minY, g.y + g.height - root.height)
+                const targetX = Math.max(minX, Math.min(maxX, root.x))
+                const targetY = Math.max(minY, Math.min(maxY, root.y))
+
+                if (Math.abs(targetX - root.x) > 0.5) {
+                    settleX.stop()
+                    settleX.from = root.x
+                    settleX.to = targetX
+                    settleX.start()
+                }
+                if (Math.abs(targetY - root.y) > 0.5) {
+                    settleY.stop()
+                    settleY.from = root.y
+                    settleY.to = targetY
+                    settleY.start()
+                }
+            }
+
+            function finishDrag() {
+                if (!dragging)
+                    return
+
+                followCursor()
+                dragging = false
+                dragPoll.stop()
+
+                if (moved)
+                    settleToScreen()
+            }
+
+            onPressed: (mouse) => {
+                if (mouse.button !== Qt.LeftButton)
+                    return
+
+                settleX.stop()
+                settleY.stop()
+
+                pressCursor = AppSettings.cursorPosition()
+                startWindowX = root.x
+                startWindowY = root.y
+                moved = false
+                dragging = true
+                dragPoll.start()
+            }
+
+            onReleased: finishDrag()
+            onCanceled: finishDrag()
+
+            Timer {
+                id: dragPoll
+                interval: 16
+                repeat: true
+                onTriggered: titleDrag.followCursor()
+            }
+
+            NumberAnimation {
+                id: settleX
+                target: root
+                property: "x"
+                duration: 360
+                easing.type: Easing.OutBack
+                easing.overshoot: 1.12
+            }
+
+            NumberAnimation {
+                id: settleY
+                target: root
+                property: "y"
+                duration: 360
+                easing.type: Easing.OutBack
+                easing.overshoot: 1.12
+            }
         }
 
         Text {
@@ -380,6 +491,7 @@ Window {
 
         DateStrip {
             id: dateStrip
+            enabled: !root.modalOpen
 
             anchors.top: progressTrack.bottom
             anchors.topMargin: 8
@@ -393,6 +505,9 @@ Window {
             selectedDate: root.currentDate
 
             onDateSelected: (dateStr) => {
+                // 双保险：弹窗打开或关闭保护期内，拒绝任何日期切换
+                if (root.modalOpen)
+                    return
                 root.currentDate = dateStr
                 taskManager.loadTasks(dateStr)
             }
@@ -400,6 +515,7 @@ Window {
 
         Rectangle {
             id: taskCard
+            enabled: !root.modalOpen
 
             anchors.top: dateStrip.bottom
             anchors.topMargin: 6
@@ -510,6 +626,7 @@ Window {
 
         Rectangle {
             id: addButton
+            enabled: !root.modalOpen
 
             anchors.left: parent.left
             anchors.right: parent.right
@@ -656,7 +773,8 @@ Window {
 
             anchors.fill: parent
             // 位于内容之上、弹窗之下；靠声明顺序而不是 z 值
-            visible: addDialog.opened || editDialog.opened || themePicker.opened
+            // 关闭后再多保持 220ms，吃掉关闭瞬间的释放事件
+            visible: root.modalOpen
             enabled: visible
             acceptedButtons: Qt.AllButtons
             hoverEnabled: true
@@ -664,6 +782,8 @@ Window {
             cursorShape: Qt.ArrowCursor
 
             onPressed: (mouse) => {
+                blockerGrace.restart()
+
                 if (addDialog.opened)
                     addDialog.close()
                 else if (editDialog.opened)
@@ -676,6 +796,27 @@ Window {
             onWheel: (wheel) => {
                 wheel.accepted = true
             }
+        }
+
+        Timer {
+            id: blockerGrace
+            interval: 220
+            repeat: false
+        }
+
+        Connections {
+            target: themePicker
+            function onClosed() { blockerGrace.restart() }
+        }
+
+        Connections {
+            target: addDialog
+            function onClosed() { blockerGrace.restart() }
+        }
+
+        Connections {
+            target: editDialog
+            function onClosed() { blockerGrace.restart() }
         }
 
         Rectangle {
@@ -756,6 +897,8 @@ Window {
 
         ThemePicker {
             id: themePicker
+
+            onWillClose: blockerGrace.restart()
         }
     }
 }

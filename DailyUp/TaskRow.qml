@@ -10,7 +10,6 @@ Item {
     width: ListView.view ? ListView.view.width : 0
     height: 45
 
-    required property int taskId
     required property string taskContent
     required property bool isCompleted
     required property bool isPinned

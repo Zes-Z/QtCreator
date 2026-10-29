@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Window
-import DailyUp
 
 // macOS 风格红黄绿窗口按钮。
 Row {

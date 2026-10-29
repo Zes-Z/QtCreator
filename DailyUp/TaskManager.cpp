@@ -40,7 +40,7 @@ void TaskManager::checkDateRollover() {
         QString newTodayStr =
             currentDate.toString("yyyy-MM-dd");
 
-        setCurrentDate(newTodayStr);
+        loadTasks(newTodayStr);
 
 
         // 4. 通知 QML 日期栏刷新
@@ -76,12 +76,6 @@ QVariant TaskManager::data(const QModelIndex &index, int role) const {
 
     switch (role) {
 
-    case IdRole:
-        return task.id;
-
-    case DateRole:
-        return task.date;
-
     case ContentRole:
         return task.content;
 
@@ -101,8 +95,6 @@ QHash<int, QByteArray> TaskManager::roleNames() const {
 
     QHash<int, QByteArray> roles;
 
-    roles[IdRole] = "taskId";
-    roles[DateRole] = "taskDate";
     roles[ContentRole] = "taskContent";
     roles[IsCompletedRole] = "isCompleted";
     roles[IsPinnedRole] = "isPinned";
@@ -111,17 +103,6 @@ QHash<int, QByteArray> TaskManager::roleNames() const {
 }
 
 
-void TaskManager::setCurrentDate(const QString &date) {
-
-    if (m_currentDate != date) {
-
-        m_currentDate = date;
-
-        emit currentDateChanged();
-
-        loadTasks(date);
-    }
-}
 
 
 // 根据日期加载任务（实现每天数据的严格独立隔离）

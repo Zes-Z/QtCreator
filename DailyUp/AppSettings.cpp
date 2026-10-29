@@ -1,7 +1,8 @@
 #include "AppSettings.h"
 
-#include <QCoreApplication>
-#include <QStandardPaths>
+#include <QCursor>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QStringList>
 
 namespace {
@@ -78,15 +79,19 @@ void AppSettings::saveWindowGeometry(int width, int height)
     emit windowGeometryChanged();
 }
 
-QString AppSettings::dataDir() const
+QPoint AppSettings::cursorPosition() const
 {
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return QCursor::pos();
 }
 
-QString AppSettings::appVersion() const
+QRect AppSettings::availableGeometryAt(int x, int y) const
 {
-    return QCoreApplication::applicationVersion();
+    QScreen *screen = QGuiApplication::screenAt(QPoint(x, y));
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    return screen ? screen->availableGeometry() : QRect();
 }
+
 
 bool AppSettings::isValidTheme(const QString &theme)
 {

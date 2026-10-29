@@ -3,13 +3,11 @@
 #include <QObject>
 #include <QSqlDatabase>
 #include <QString>
-#include <QVariantList>
 #include <QList>
 
 // 定义一个结构体来映射数据库中的一行任务数据
 struct TaskData {
     int id;
-    QString date;       // 格式约定为 "YYYY-MM-DD"
     QString content;
     bool isCompleted;
     bool isPinned;

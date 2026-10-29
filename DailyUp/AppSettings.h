@@ -2,6 +2,8 @@
 
 #include <QColor>
 #include <QObject>
+#include <QPoint>
+#include <QRect>
 #include <QSettings>
 #include <QString>
 #include <QVariantMap>
@@ -15,8 +17,6 @@ class AppSettings : public QObject
     Q_PROPERTY(QString theme READ theme WRITE setTheme NOTIFY themeChanged)
     Q_PROPERTY(QColor customAccent READ customAccent WRITE setCustomAccent NOTIFY customAccentChanged)
     Q_PROPERTY(QVariantMap windowGeometry READ windowGeometry NOTIFY windowGeometryChanged)
-    Q_PROPERTY(QString dataDir READ dataDir CONSTANT)
-    Q_PROPERTY(QString appVersion READ appVersion CONSTANT)
 
 public:
     explicit AppSettings(QObject *parent = nullptr);
@@ -30,8 +30,10 @@ public:
     QVariantMap windowGeometry() const;
     Q_INVOKABLE void saveWindowGeometry(int width, int height);
 
-    QString dataDir() const;
-    QString appVersion() const;
+    // 拖动窗口与边界回弹使用：全局鼠标位置 + 鼠标所在屏幕的可用区域
+    Q_INVOKABLE QPoint cursorPosition() const;
+    Q_INVOKABLE QRect availableGeometryAt(int x, int y) const;
+
 
 signals:
     void themeChanged();

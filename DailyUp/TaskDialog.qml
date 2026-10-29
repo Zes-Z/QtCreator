@@ -73,7 +73,6 @@ Popup {
         }
 
         Rectangle {
-            id: card
             anchors.fill: parent
             radius: Theme.cardRadius
             color: Theme.surface

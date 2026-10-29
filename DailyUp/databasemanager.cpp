@@ -216,14 +216,13 @@ QList<TaskData> DatabaseManager::getTasksByDate(const QString& date) {
     QSqlQuery query;
 
     // 查询指定日期的任务，优先展示置顶任务，然后按 ID 排序
-    query.prepare("SELECT id, date, content, is_completed, is_pinned FROM Tasks WHERE date = :date ORDER BY is_pinned DESC, id ASC");
+    query.prepare("SELECT id, content, is_completed, is_pinned FROM Tasks WHERE date = :date ORDER BY is_pinned DESC, id ASC");
     query.bindValue(":date", date);
 
     if (query.exec()) {
         while (query.next()) {
             TaskData task;
             task.id = query.value("id").toInt();
-            task.date = query.value("date").toString();
             task.content = query.value("content").toString();
             task.isCompleted = query.value("is_completed").toBool();
             task.isPinned = query.value("is_pinned").toBool();

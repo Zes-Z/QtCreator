@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Layouts
 import DailyUp
 
 // 最近七天。今天永远在最右侧，选中的一天用强调色填充。

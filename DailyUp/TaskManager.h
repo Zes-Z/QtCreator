@@ -8,15 +8,12 @@
 
 class TaskManager : public QAbstractListModel {
     Q_OBJECT
-    Q_PROPERTY(QString currentDate READ currentDate WRITE setCurrentDate NOTIFY currentDateChanged)
     Q_PROPERTY(int totalCount READ totalCount NOTIFY countsChanged)
     Q_PROPERTY(int completedCount READ completedCount NOTIFY countsChanged)
 
 public:
     enum TaskRoles {
-        IdRole = Qt::UserRole + 1,
-        DateRole,
-        ContentRole,
+        ContentRole = Qt::UserRole + 1,
         IsCompletedRole,
         IsPinnedRole
     };
@@ -27,8 +24,6 @@ public:
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     QHash<int, QByteArray> roleNames() const override;
 
-    QString currentDate() const { return m_currentDate; }
-    void setCurrentDate(const QString &date);
 
     int totalCount() const { return m_tasks.size(); }
     int completedCount() const;
@@ -43,7 +38,6 @@ public:
     Q_INVOKABLE QString contentAt(int index) const;
 
 signals:
-    void currentDateChanged();
     void dateRollover();
     void countsChanged();
     void errorOccurred(const QString &message);

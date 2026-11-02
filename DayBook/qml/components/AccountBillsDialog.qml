@@ -18,7 +18,7 @@ Popup {
     dim: false
     padding: 22
     focus: true
-    closePolicy: Popup.CloseOnEscape
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     anchors.centerIn: Overlay.overlay
     Overlay.modal: Rectangle { color: "transparent" }
 
@@ -44,7 +44,7 @@ Popup {
         accountId = id
         accountName = name
         accountColor = color
-        App.setAccountBillsAccount(id)
+        App.setAccountAllBillsAccount(id)
         open()
     }
 
@@ -66,7 +66,7 @@ Popup {
                 anchors.left: parent.left
                 anchors.leftMargin: 16
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.accountName + " · 本月流水"
+                text: root.accountName + " · 全部流水"
                 color: Theme.ink
                 font.family: Theme.fontFamily
                 font.pixelSize: 19
@@ -88,19 +88,19 @@ Popup {
             anchors.topMargin: 44
             spacing: 18
             Text {
-                text: App.accountBills.transactionCount + " 笔账单"
+                text: App.accountAllBills.transactionCount + " 笔账单"
                 color: Theme.faint
                 font.family: Theme.numberFamily
                 font.pixelSize: 10
             }
             Text {
-                text: "支出 " + App.money(App.accountBills.totalExpense)
+                text: "支出 " + App.money(App.accountAllBills.totalExpense)
                 color: Theme.expense
                 font.family: Theme.numberFamily
                 font.pixelSize: 10
             }
             Text {
-                text: "收入 " + App.money(App.accountBills.totalIncome)
+                text: "收入 " + App.money(App.accountAllBills.totalIncome)
                 color: Theme.income
                 font.family: Theme.numberFamily
                 font.pixelSize: 10
@@ -123,7 +123,7 @@ Popup {
             anchors.topMargin: 76
             anchors.bottom: parent.bottom
             clip: true
-            model: App.accountBills
+            model: App.accountAllBills
             spacing: 0
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: 500
@@ -204,12 +204,12 @@ Popup {
         }
 
         EmptyState {
-            visible: App.accountBills.transactionCount === 0
+            visible: App.accountAllBills.transactionCount === 0
             anchors.centerIn: parent
             width: parent.width
             icon: "receipt_long"
-            title: "这个月还没有流水"
-            description: "该账户在本月还没有账单记录。"
+            title: "还没有流水"
+            description: "该账户还没有账单记录。"
         }
     }
 }

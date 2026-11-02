@@ -18,7 +18,7 @@ Item {
     implicitHeight: 210
 
     readonly property real plotLeft: showAxis ? 38 : 4
-    readonly property real plotRight: 8
+    readonly property real plotRight: showAxis ? 38 : 4
     readonly property real plotTop: 8
     readonly property real plotBottom: showAxis ? 26 : 8
     readonly property real plotWidth: Math.max(1, width - plotLeft - plotRight)

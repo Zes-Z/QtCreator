@@ -18,6 +18,7 @@ public:
     bool clearFinancialData(QString *error = nullptr);
     bool exportCsv(const QString &filePath, QString *error = nullptr) const;
     bool backup(const QString &filePath, QString *error = nullptr) const;
+    bool inheritBudgetsForMonth(const QString &currentMonth, const QString &previousMonth);
 
     bool hasTransactions() const;
     bool isDemoSeeded() const;

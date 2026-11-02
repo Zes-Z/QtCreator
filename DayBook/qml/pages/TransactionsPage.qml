@@ -114,17 +114,13 @@ Item {
                 Text {
                     text: App.transactions.hasActiveFilters
                           ? "筛选后 " + App.transactions.transactionCount + " 笔账单"
-                          : "这个月，每一笔都有迹可循"
+                          : "所有账单，按时序排列"
                     color: Theme.muted
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
                 }
             }
 
-            MonthSwitcher {
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-            }
         }
 
         Item {
@@ -203,7 +199,7 @@ Item {
                     spacing: 5
                     Rectangle { width: 5; height: 5; radius: 3; color: Theme.income; anchors.verticalCenter: parent.verticalCenter }
                     Text {
-                        text: "收入 " + App.money(App.monthIncome)
+                        text: "收入 " + App.money(page.accountView ? App.accountBills.totalIncome : App.transactions.totalIncome)
                         color: Theme.inkSecondary
                         font.family: Theme.numberFamily
                         font.pixelSize: 10
@@ -214,7 +210,7 @@ Item {
                     spacing: 5
                     Rectangle { width: 5; height: 5; radius: 3; color: Theme.expense; anchors.verticalCenter: parent.verticalCenter }
                     Text {
-                        text: "支出 " + App.money(App.monthExpense)
+                        text: "支出 " + App.money(page.accountView ? App.accountBills.totalExpense : App.transactions.totalExpense)
                         color: Theme.inkSecondary
                         font.family: Theme.numberFamily
                         font.pixelSize: 10
@@ -248,7 +244,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         text: page.accountView
                               ? "账户账单"
-                              : (App.transactions.hasActiveFilters ? "筛选结果" : "本月账单")
+                              : (App.transactions.hasActiveFilters ? "筛选结果" : "账单明细")
                         color: Theme.ink
                         font.family: Theme.fontFamily
                         font.pixelSize: 12
@@ -330,26 +326,7 @@ Item {
                     model: page.accountView ? App.accountBills : App.transactions
                     spacing: 0
                     cacheBuffer: 500
-                    boundsBehavior: Flickable.OvershootBounds
-                    property real monthPull: 0
-
-                    onMovementStarted: monthPull = 0
-                    onVerticalOvershootChanged: {
-                        if (moving)
-                            monthPull = Math.max(monthPull, Math.abs(verticalOvershoot))
-                    }
-                    onMovementEnded: {
-                        if (monthPull > 34 && contentHeight > height + 4) {
-                            if (atYEnd) {
-                                App.shiftMonth(-1)
-                                Qt.callLater(function() { list.positionViewAtEnd() })
-                            } else if (atYBeginning) {
-                                App.shiftMonth(1)
-                                Qt.callLater(function() { list.positionViewAtBeginning() })
-                            }
-                        }
-                        monthPull = 0
-                    }
+                    boundsBehavior: Flickable.StopAtBounds
 
                     delegate: Item {
                         width: list.width
@@ -452,13 +429,13 @@ Item {
                     width: parent.width
                     icon: page.accountView ? "receipt_long"
                                           : (App.transactions.hasActiveFilters ? "search" : "receipt_long")
-                    title: page.accountView ? "该账户本月还没有账单"
-                                           : (App.transactions.hasActiveFilters ? "没有找到相关账单" : "这个月还没有账单")
+                    title: page.accountView ? "该账户还没有账单"
+                                           : (App.transactions.hasActiveFilters ? "没有找到相关账单" : "还没有账单")
                     description: page.accountView
                                  ? "换一个账户看看，或者先记一笔。"
                                  : (App.transactions.hasActiveFilters
                                     ? "换一个关键词，或者把筛选条件清空看看。"
-                                    : "记下第一笔，让这个月开始有迹可循。")
+                                    : "记录过的账单会按时间排列在这里。")
                     actionText: !page.accountView && App.transactions.hasActiveFilters ? "清除筛选" : "记一笔"
                     actionIcon: !page.accountView && App.transactions.hasActiveFilters ? "refresh" : "add"
                     onActionClicked: {

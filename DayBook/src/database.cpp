@@ -393,6 +393,34 @@ bool Database::ensureDefaults(QString *error)
     return true;
 }
 
+bool Database::inheritBudgetsForMonth(const QString &currentMonth, const QString &previousMonth)
+{
+    if (currentMonth.isEmpty() || previousMonth.isEmpty() || currentMonth == previousMonth)
+        return false;
+    const QString marker = QStringLiteral("budgets_inherited_") + currentMonth;
+    if (meta(marker, "0") == "1")
+        return true;
+
+    QSqlQuery previous(m_db);
+    previous.prepare("SELECT COUNT(*) FROM budgets WHERE month=:month");
+    previous.bindValue(":month", previousMonth);
+    if (!previous.exec() || !previous.next())
+        return false;
+    if (previous.value(0).toInt() == 0)
+        return setMeta(marker, "1");
+
+    QSqlQuery copy(m_db);
+    copy.prepare("INSERT INTO budgets(category_id, month, amount)"
+                 " SELECT category_id, :currentMonth, amount FROM budgets"
+                 " WHERE month=:previousMonth"
+                 " ON CONFLICT(category_id, month) DO NOTHING");
+    copy.bindValue(":currentMonth", currentMonth);
+    copy.bindValue(":previousMonth", previousMonth);
+    if (!copy.exec())
+        return false;
+    return setMeta(marker, "1");
+}
+
 bool Database::setMeta(const QString &key, const QString &value)
 {
     QSqlQuery q(m_db);

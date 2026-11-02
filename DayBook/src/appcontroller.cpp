@@ -22,6 +22,7 @@
 #include <QSqlQuery>
 #include <QStandardPaths>
 #include <QStyleHints>
+#include <QTimer>
 #include <QUrl>
 #include <QVariant>
 #include <QtMath>
@@ -277,6 +278,7 @@ bool AppController::initialize(QString *error)
 
     m_transactions = new TransactionModel(this);
     m_accountBills = new TransactionModel(this);
+    m_accountAllBills = new TransactionModel(this);
     m_accounts = new AccountModel(this);
     m_categories = new CategoryModel(this);
     m_budgets = new BudgetModel(this);
@@ -287,6 +289,14 @@ bool AppController::initialize(QString *error)
             emit appearanceChanged();
         });
     }
+
+    m_lastObservedMonth = QDate::currentDate().toString("yyyy-MM");
+    inheritBudgetsForCurrentMonth();
+
+    auto *monthTimer = new QTimer(this);
+    monthTimer->setInterval(30000);
+    connect(monthTimer, &QTimer::timeout, this, &AppController::checkMonthRollover);
+    monthTimer->start();
 
     refreshAll();
     return true;
@@ -335,6 +345,8 @@ void AppController::setCurrentMonth(const QString &month)
     if (normalized == m_month)
         return;
     m_month = normalized;
+    if (normalized == QDate::currentDate().toString("yyyy-MM"))
+        inheritBudgetsForCurrentMonth();
     emit currentMonthChanged();
     refreshAll();
 }
@@ -626,17 +638,45 @@ AppController::MonthTotals AppController::totalsForMonth(const QString &month) c
     return totals;
 }
 
+void AppController::checkMonthRollover()
+{
+    const QString actualMonth = QDate::currentDate().toString("yyyy-MM");
+    if (actualMonth == m_lastObservedMonth)
+        return;
+
+    const bool followingClock = (m_month == m_lastObservedMonth);
+    m_lastObservedMonth = actualMonth;
+
+    if (followingClock) {
+        if (m_month != actualMonth)
+            setCurrentMonth(actualMonth);
+    } else {
+        inheritBudgetsForCurrentMonth();
+        if (m_month == actualMonth)
+            refreshAll();
+    }
+}
+
+void AppController::inheritBudgetsForCurrentMonth()
+{
+    const QDate today = QDate::currentDate();
+    Database::instance().inheritBudgetsForMonth(today.toString("yyyy-MM"),
+                                                today.addMonths(-1).toString("yyyy-MM"));
+}
+
 void AppController::refreshAll()
 {
     if (!m_transactions)
         return;
-    m_transactions->setMonth(m_month);
-    m_accountBills->setMonth(m_month);
+    m_transactions->setMonth(QString());
+    m_accountBills->setMonth(QString());
+    m_accountAllBills->setMonth(QString());
     m_accounts->setMonth(m_month);
     m_categories->setMonth(m_month);
     m_budgets->setMonth(m_month);
     m_transactions->reload();
     m_accountBills->reload();
+    m_accountAllBills->reload();
     m_accounts->reload();
     m_categories->reload();
     m_budgets->reload();
@@ -649,8 +689,17 @@ void AppController::setAccountBillsAccount(int accountId)
     if (!m_accountBills)
         return;
     m_accountBills->clearFilters();
-    m_accountBills->setMonth(m_month);
+    m_accountBills->setMonth(QString());
     m_accountBills->setAccountFilter(accountId);
+}
+
+void AppController::setAccountAllBillsAccount(int accountId)
+{
+    if (!m_accountAllBills)
+        return;
+    m_accountAllBills->clearFilters();
+    m_accountAllBills->setMonth(QString());
+    m_accountAllBills->setAccountFilter(accountId);
 }
 
 void AppController::refreshSummary()
@@ -829,32 +878,6 @@ void AppController::refreshSummary()
             item["cumulative"] = running;
             item["key"] = QStringLiteral("%1-%2").arg(m_month).arg(day, 2, 10, QChar('0'));
             m_dailySeries.append(item);
-        }
-    }
-
-    // Current quarter to date, used by the quarter range of the trend chart.
-    m_quarterSeries.clear();
-    {
-        const QDate today = QDate::currentDate();
-        const int quarterStartMonth = ((today.month() - 1) / 3) * 3 + 1;
-        const QDate startDate(today.year(), quarterStartMonth, 1);
-        QHash<QString, double> byDate;
-        QSqlQuery q(Database::instance().db());
-        q.prepare("SELECT substr(occurred_at,1,10), SUM(amount)"
-                  " FROM transactions WHERE kind='expense' AND substr(occurred_at,1,10)>=:from"
-                  " GROUP BY 1");
-        q.bindValue(":from", startDate.toString("yyyy-MM-dd"));
-        if (q.exec()) {
-            while (q.next())
-                byDate.insert(q.value(0).toString(), q.value(1).toDouble());
-        }
-        for (QDate d = startDate; d <= today; d = d.addDays(1)) {
-            const QString key = d.toString("yyyy-MM-dd");
-            QVariantMap item;
-            item["key"] = key;
-            item["label"] = QStringLiteral("%1/%2").arg(d.month()).arg(d.day(), 2, 10, QChar('0'));
-            item["amount"] = byDate.value(key, 0.0);
-            m_quarterSeries.append(item);
         }
     }
 

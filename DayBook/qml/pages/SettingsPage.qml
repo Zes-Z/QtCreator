@@ -271,7 +271,7 @@ Item {
                             anchors.bottom: parent.bottom
                             spacing: 0
                             Row {
-                                spacing: 10
+                                spacing: 8
                                 Repeater {
                                     model: page.accentChoices
                                     Item {

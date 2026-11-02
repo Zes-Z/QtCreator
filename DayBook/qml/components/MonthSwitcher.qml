@@ -175,7 +175,7 @@ Item {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                App.setCurrentMonth(root.monthKey(root.pickerYear, index + 1))
+                                App.currentMonth = root.monthKey(root.pickerYear, index + 1)
                                 picker.close()
                             }
                         }

@@ -72,7 +72,7 @@ Item {
                     anchors.fill: parent
                     radius: 8
                     color: root.hoverHighlight && mouse.containsMouse && index !== root.currentIndex
-                           ? Theme.withAlpha(Theme.ink, 0.035) : "transparent"
+                           ? Theme.withAlpha(Theme.ink, 0.06) : "transparent"
                 }
                 Text {
                     id: label

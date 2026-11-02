@@ -10,7 +10,7 @@ Rectangle {
     implicitWidth: toggleRow.implicitWidth + 18
     implicitHeight: 26
     radius: 9
-    color: toggleMouse.containsMouse ? Theme.surfaceRaised : Theme.surfaceSunken
+    color: toggleMouse.containsMouse ? Theme.withAlpha(Theme.ink, 0.075) : Theme.surfaceSunken
     border.width: 1
     border.color: toggleMouse.containsMouse ? Theme.withAlpha(Theme.accent, 0.28) : Theme.hairline
     Behavior on color { ColorAnimation { duration: 120 } }

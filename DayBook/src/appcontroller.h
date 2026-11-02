@@ -17,6 +17,7 @@ class AppController : public QObject
 
     Q_PROPERTY(TransactionModel *transactions READ transactions CONSTANT)
     Q_PROPERTY(TransactionModel *accountBills READ accountBills CONSTANT)
+    Q_PROPERTY(TransactionModel *accountAllBills READ accountAllBills CONSTANT)
     Q_PROPERTY(AccountModel *accounts READ accounts CONSTANT)
     Q_PROPERTY(CategoryModel *categories READ categories CONSTANT)
     Q_PROPERTY(BudgetModel *budgets READ budgets CONSTANT)
@@ -60,7 +61,6 @@ class AppController : public QObject
     Q_PROPERTY(QVariantList categoryBreakdown READ categoryBreakdown NOTIFY summaryChanged)
     Q_PROPERTY(QVariantList incomeBreakdown READ incomeBreakdown NOTIFY summaryChanged)
     Q_PROPERTY(QVariantList dailySeries READ dailySeries NOTIFY summaryChanged)
-    Q_PROPERTY(QVariantList quarterSeries READ quarterSeries NOTIFY summaryChanged)
     Q_PROPERTY(QVariantList monthlyTrend READ monthlyTrend NOTIFY summaryChanged)
     Q_PROPERTY(QVariantList weekdayStats READ weekdayStats NOTIFY summaryChanged)
     Q_PROPERTY(QVariantList allCategoryOptions READ allCategoryOptions NOTIFY summaryChanged)
@@ -84,12 +84,13 @@ public:
 
     TransactionModel *transactions() const { return m_transactions; }
     TransactionModel *accountBills() const { return m_accountBills; }
+    TransactionModel *accountAllBills() const { return m_accountAllBills; }
     AccountModel *accounts() const { return m_accounts; }
     CategoryModel *categories() const { return m_categories; }
     BudgetModel *budgets() const { return m_budgets; }
 
     QString currentMonth() const { return m_month; }
-    void setCurrentMonth(const QString &month);
+    Q_INVOKABLE void setCurrentMonth(const QString &month);
     QString monthLabel() const;
     QString monthShortLabel() const;
     bool isCurrentMonth() const;
@@ -140,7 +141,6 @@ public:
     QVariantList categoryBreakdown() const { return m_categoryBreakdown; }
     QVariantList incomeBreakdown() const { return m_incomeBreakdown; }
     QVariantList dailySeries() const { return m_dailySeries; }
-    QVariantList quarterSeries() const { return m_quarterSeries; }
     QVariantList monthlyTrend() const { return m_monthlyTrend; }
     QVariantList weekdayStats() const { return m_weekdayStats; }
     QVariantList allCategoryOptions() const { return m_allCategoryOptions; }
@@ -158,6 +158,7 @@ public:
     void setStartupModal(const QString &modal) { m_startupModal = modal; }
 
     Q_INVOKABLE void setAccountBillsAccount(int accountId);
+    Q_INVOKABLE void setAccountAllBillsAccount(int accountId);
     Q_INVOKABLE void shiftMonth(int delta);
     Q_INVOKABLE void goToToday();
 
@@ -221,6 +222,8 @@ private:
         int count = 0;
     };
     MonthTotals totalsForMonth(const QString &month) const;
+    void inheritBudgetsForCurrentMonth();
+    void checkMonthRollover();
     void refreshSummary();
     void setLastError(const QString &message);
     QString monthKey(const QDate &date) const { return date.toString("yyyy-MM"); }
@@ -228,12 +231,14 @@ private:
 
     TransactionModel *m_transactions = nullptr;
     TransactionModel *m_accountBills = nullptr;
+    TransactionModel *m_accountAllBills = nullptr;
     AccountModel *m_accounts = nullptr;
     CategoryModel *m_categories = nullptr;
     BudgetModel *m_budgets = nullptr;
 
     QSettings m_settings;
     QString m_month;
+    QString m_lastObservedMonth;
     QString m_themeMode = "system";
     QString m_accentName = "coral";
     QString m_customAccent = "#E85D75";
@@ -265,7 +270,6 @@ private:
     QVariantList m_categoryBreakdown;
     QVariantList m_incomeBreakdown;
     QVariantList m_dailySeries;
-    QVariantList m_quarterSeries;
     QVariantList m_monthlyTrend;
     QVariantList m_weekdayStats;
     QVariantList m_allCategoryOptions;

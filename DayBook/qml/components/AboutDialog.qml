@@ -12,7 +12,7 @@ Popup {
     dim: false
     padding: 24
     focus: true
-    closePolicy: Popup.CloseOnEscape
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     anchors.centerIn: Overlay.overlay
     Overlay.modal: Rectangle { color: "transparent" }
 

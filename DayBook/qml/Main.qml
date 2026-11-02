@@ -7,8 +7,8 @@ import DayBook
 Window {
     id: win
 
-    width: 1200
-    height: 800
+    width: 840
+    height: 600
     minimumWidth: 840
     minimumHeight: 600
     visible: true
@@ -83,6 +83,13 @@ Window {
         currentPage = page
     }
 
+    function centerOnScreen() {
+        if (maximized || visibility === Window.FullScreen)
+            return
+        x = Math.round((Screen.availableWidth - width) / 2)
+        y = Math.round((Screen.availableHeight - height) / 2)
+    }
+
     function toggleMaximize() {
         if (maximized)
             visibility = Window.Windowed
@@ -100,6 +107,7 @@ Window {
     opacity: 0
     Component.onCompleted: {
         opacity = 1
+        Qt.callLater(function() { win.centerOnScreen() })
         if (App.startupModal === "account")
             currentPage = "accounts"
         else if (App.startupModal === "budget")

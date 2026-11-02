@@ -72,16 +72,14 @@ Item {
         ScriptAction { script: page.periodFlipped = !page.periodFlipped }
         NumberAnimation { target: page; property: "periodScale"; from: 0; to: 1; duration: 180; easing.type: Easing.OutCubic }
     }
-    property int trendRange: 1
+    property int trendRange: 0
     property var donutSegments: buildDonut(App.categoryBreakdown)
     property var incomeSegments: buildDonut(App.incomeBreakdown)
 
     Component.onCompleted: {
         flick.contentY = 0
-        if (App.startupModal === "quarter")
-            trendRange = 0
-        else if (App.startupModal === "seven")
-            trendRange = 2
+        if (App.startupModal === "seven")
+            trendRange = 1
         else if (App.startupModal === "income")
             compositionFlipped = true
         else if (App.startupModal === "budgetflip")
@@ -91,15 +89,9 @@ Item {
 
     }
 
-    function trendMonths() {
-        return (App.monthlyTrend || []).slice(-3)
-    }
-
     function trendSeries() {
-        if (trendRange === 0)
-            return App.quarterSeries || []
         let series = App.dailySeries || []
-        if (trendRange === 2)
+        if (trendRange === 1)
             series = series.slice(Math.max(0, series.length - 7))
         return series
     }
@@ -110,14 +102,6 @@ Item {
 
     function trendLabels() {
         return trendSeries().map(function(item) { return item.label })
-    }
-
-    function trendSubtitle() {
-        if (trendRange === 0)
-            return "本季度每日支出"
-        if (trendRange === 2)
-            return "近 7 天每日支出"
-        return "本月每日支出"
     }
 
     function expenseCount() {
@@ -270,7 +254,7 @@ Item {
                                 height: 38
                                 controlHeight: 38
                                 hoverHighlight: false
-                                items: ["本季度", "本月", "近七天"]
+                                items: ["本月", "近七天"]
                                 currentIndex: page.trendRange
                                 onActivated: function(index) { page.trendRange = index }
                             }
@@ -282,7 +266,7 @@ Item {
                             y: 46
                             values: page.trendValues()
                             labels: page.trendLabels()
-                            labelEvery: page.trendRange === 0 ? 10 : (page.trendRange === 2 ? 1 : 0)
+                            labelEvery: page.trendRange === 1 ? 1 : 0
                             lineColor: Theme.expense
                         }
                     }

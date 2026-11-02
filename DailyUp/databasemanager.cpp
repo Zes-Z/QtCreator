@@ -16,6 +16,19 @@
 
 namespace {
 
+// 兼容旧数据里可能出现的 2026-9-30 / 2026/9/30 等非补零日期。
+QDate parseTaskDate(const QString &value)
+{
+    QDate date = QDate::fromString(value, Qt::ISODate);
+    if (!date.isValid())
+        date = QDate::fromString(value, QStringLiteral("yyyy-M-d"));
+    if (!date.isValid())
+        date = QDate::fromString(value, QStringLiteral("yyyy/MM/dd"));
+    if (!date.isValid())
+        date = QDate::fromString(value, QStringLiteral("yyyy/M/d"));
+    return date;
+}
+
 // 数据文件可能从只读位置复制过来（模式 444），或被 Gatekeeper 打上隔离属性。
 // SQLite 打不开写事务时任务会"保存了但没出现"，所以启动前主动修复。
 void repairWritableFile(const QString &path)
@@ -288,53 +301,65 @@ bool DatabaseManager::toggleTaskPin(int id, bool isPinned) {
 
 // ================= 新增：检查并执行跨日任务继承 =================
 bool DatabaseManager::rolloverTasksForToday() {
-    // 获取系统的 "今天" 日期
-    QString todayStr = QDate::currentDate().toString("yyyy-MM-dd");
+    const QDate today = QDate::currentDate();
+    const QString todayStr = today.toString(Qt::ISODate);
 
-    // 1. 先检查今天是否已经有任务了 (避免重复复制)
-    QSqlQuery checkQuery;
-    checkQuery.prepare("SELECT COUNT(*) FROM Tasks WHERE date = :today");
-    checkQuery.bindValue(":today", todayStr);
-
-    if (checkQuery.exec() && checkQuery.next()) {
-        if (checkQuery.value(0).toInt() > 0) {
-            // 今天已经有数据了，直接返回 false，表示不需要进行跨日操作
-            return false;
-        }
-    }
-
-    // 2. 寻找数据库中离今天最近的、且有记录的历史日期 (上一次使用软件的日期)
-    QSqlQuery lastDateQuery;
-    lastDateQuery.prepare("SELECT date FROM Tasks WHERE date < :today ORDER BY date DESC LIMIT 1");
-    lastDateQuery.bindValue(":today", todayStr);
-
-    QString lastDate;
-    if (lastDateQuery.exec() && lastDateQuery.next()) {
-        lastDate = lastDateQuery.value(0).toString();
-    } else {
-        // 如果数据库完全是空的，或者没有任何早于今天的记录，也不需要复制
+    // 一次取出所有不同日期，用 QDate 解析和比较。
+    // 不依赖 SQL 的字符串排序，因此 2026-9-30 这类旧格式也能正确跨月。
+    QSqlQuery datesQuery;
+    datesQuery.prepare("SELECT DISTINCT date FROM Tasks");
+    if (!datesQuery.exec()) {
+        qWarning() << "Failed to read task dates:" << datesQuery.lastError().text();
         return false;
     }
 
-    // 3. 核心逻辑：只继承任务内容，不继承任何状态。
-    // 完成与置顶都从 0 开始，新的一天是一张干净清单。
+    bool todayHasTasks = false;
+    QDate sourceParsed;
+    QString sourceDate;
+
+    while (datesQuery.next()) {
+        const QString raw = datesQuery.value(0).toString();
+        const QDate parsed = parseTaskDate(raw);
+        if (!parsed.isValid())
+            continue;
+
+        if (parsed == today) {
+            todayHasTasks = true;
+            continue;
+        }
+
+        if (parsed < today
+            && (!sourceParsed.isValid() || parsed > sourceParsed)) {
+            sourceParsed = parsed;
+            sourceDate = raw; // 保留原始字符串，确保能精确匹配数据库行
+        }
+    }
+
+    // 今天已有任务，避免重复复制。
+    if (todayHasTasks)
+        return false;
+
+    if (!sourceParsed.isValid() || sourceDate.isEmpty())
+        return false;
+
+    // 只继承内容，完成/置顶状态全部归零。
     QSqlQuery copyQuery;
     copyQuery.prepare(R"(
         INSERT INTO Tasks (date, content, is_completed, is_pinned)
         SELECT :today, content, 0, 0
         FROM Tasks
-        WHERE date = :lastDate
+        WHERE date = :sourceDate
     )");
     copyQuery.bindValue(":today", todayStr);
-    copyQuery.bindValue(":lastDate", lastDate);
+    copyQuery.bindValue(":sourceDate", sourceDate);
 
     if (!copyQuery.exec()) {
         qWarning() << "Failed to rollover tasks:" << copyQuery.lastError().text();
         return false;
     }
 
-    qDebug() << "Successfully rolled over tasks from" << lastDate << "to" << todayStr;
-    return true; // 跨日复制成功
+    qDebug() << "Successfully rolled over tasks from" << sourceDate << "to" << todayStr;
+    return true;
 }
 
 // 在系统资源管理器中打开数据库文件所在的目录

@@ -85,22 +85,25 @@ Item {
                     lineWidth: 9
                 }
                 Column {
+                    width: parent.width
                     anchors.centerIn: parent
                     spacing: 1
                     Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
                         text: App.monthBudgetPercent + "%"
                         color: App.monthBudgetSpent > App.monthBudget ? Theme.danger : Theme.ink
                         font.family: Theme.numberFamily
                         font.pixelSize: 20
                         font.weight: 600
+                        horizontalAlignment: Text.AlignHCenter
                     }
                     Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
                         text: "已使用"
                         color: Theme.faint
                         font.family: Theme.fontFamily
                         font.pixelSize: 8
+                        horizontalAlignment: Text.AlignHCenter
                     }
                 }
             }

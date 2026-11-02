@@ -22,7 +22,7 @@ Popup {
     dim: false
     padding: 24
     focus: true
-    closePolicy: Popup.CloseOnEscape
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     anchors.centerIn: Overlay.overlay
     Overlay.modal: Rectangle { color: "transparent" }
 
@@ -32,7 +32,12 @@ Popup {
             NumberAnimation { property: "scale"; from: 0.965; to: 1; duration: 190; easing.type: Easing.OutCubic }
         }
     }
-    exit: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 110 } }
+    exit: Transition {
+        ParallelAnimation {
+            NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 120; easing.type: Easing.InCubic }
+            NumberAnimation { property: "scale"; from: 1; to: 0.97; duration: 120; easing.type: Easing.InCubic }
+        }
+    }
 
     background: Item {
         Rectangle {
